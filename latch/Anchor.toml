@@ -1,0 +1,24 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+latch = "HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG"
+
+[programs.devnet]
+latch = "HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "../.devnet-key.json"
+
+[scripts]
+# The suite runs against the DEPLOYED devnet program (validate_stat needs the real txoracle + anchored
+# roots, so it can't run on localnet). It lives at ../src and is invoked with ts-node, not mocha.
+test = "npx ts-node ../src/kernel-tests.ts"

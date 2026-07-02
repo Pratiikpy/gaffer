@@ -1,0 +1,49 @@
+# ── secrets (NEVER commit) ──
+.devnet-key.json
+*.devnet-key.json
+*-keypair.json
+.env
+.env.*
+!.env.example
+
+# ── dependencies ──
+node_modules/
+**/node_modules/
+
+# ── Rust / Anchor build artifacts ──
+latch/target/
+latch/.anchor/
+target/
+**/*.rs.bk
+
+# ── Next.js / web build ──
+web/.next/
+web/out/
+web/build/
+web/.vercel/
+**/*.tsbuildinfo
+web/next-env.d.ts
+
+# ── local data stores (superseded by the hosted DB) ──
+.data/
+web/.data/
+
+# ── logs / scratch / OS ──
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# tick vault (large capture data)
+tick-vault/
+
+# ── internal working docs (not part of the public product) ──
+CLAUDE.md
+STATUS.md
+BUILD-TODO.md
+OTHER-AGENT-REVIEW.md
+
+# ── stale/generated artifacts, one-shot research probes ──
+onchain-idl.json
+types/
+src/probe-*.ts

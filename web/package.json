@@ -1,0 +1,40 @@
+{
+  "name": "gaffer-web",
+  "version": "0.1.0",
+  "description": "GAFFER player web app — Next.js 16 PWA for the no-house parimutuel World Cup game.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@neondatabase/serverless": "^1.1.0",
+    "@privy-io/react-auth": "^3.32.2",
+    "@solana-program/memo": "^0.8.0",
+    "@solana-program/system": "^0.8.0",
+    "@solana-program/token": "^0.6.0",
+    "@solana/kit": "^3.0.3",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "axios": "^1.18.1",
+    "bs58": "^6.0.0",
+    "next": "16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #FAFAF7;
+  --ink: #0A0A0A;
+  --muted: #6B7280;
+  --line: #E5E7EB;
+  --green: #059669;
+  --greenb: #34D399;
+  --dark: #0e0e0f;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-green: var(--green);
+  --color-greenb: var(--greenb);
+  --font-sans: var(--font-outfit);
+  --font-mono: var(--font-jbmono);
+}
+
+* { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-outfit), system-ui, -apple-system, sans-serif;
+}
+.mono { font-family: var(--font-jbmono), ui-monospace, monospace; }
+::-webkit-scrollbar { width: 0; height: 0; }
+
+@keyframes gfRing { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.6); opacity: 0 } }
+@keyframes gfPop { 0% { transform: scale(.7); opacity: 0 } 60% { transform: scale(1.06) } 100% { transform: scale(1); opacity: 1 } }
+@keyframes gfPulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
+@keyframes gfRoll { from { transform: translateY(40%); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+.gf-ring { animation: gfRing 2.2s ease-out infinite; }
+.gf-pop { animation: gfPop .45s cubic-bezier(.2,.9,.3,1) both; }
+.gf-pulse { animation: gfPulse 1.3s infinite; }
+.gf-roll { animation: gfRoll .5s cubic-bezier(.2,.9,.3,1) both; }

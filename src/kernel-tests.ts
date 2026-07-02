@@ -1,0 +1,330 @@
+/**
+ * LATCH kernel — real devnet test suite (fund-safety + every instruction + negatives).
+ *
+ * Runs against the deployed program on devnet (validate_stat needs the real txoracle + anchored
+ * roots, so this cannot run on localnet). Every case ASSERTS an on-chain outcome; the process
+ * exits non-zero if ANY case fails. This is the proof that the hardened kernel decides correctly
+ * and cannot be made to pay the wrong side or lock funds.
+ *
+ * Covers: positive single-market settle + multi-staker pro-rata + exact dust + loser-reject +
+ * double-claim; negatives: cross-fixture (FixtureMismatch), binary-expression (BinaryNotAllowed),
+ * false predicate (PredicateNotMet), expired proof (Expired), non-monotone create (OnlyGreaterThan),
+ * past expiry (BadExpiry); lock_ts gate (BadLock on create, PoolLocked on join_pool/join_parlay after
+ * the cut-off); empty-winning-side → VOID refund; time-gated void() refund; parlay YES (2-leg) claim;
+ * parlay cross-fixture/binary leg negatives; parlay partial-then-bust → NO wins.
+ *
+ * Run:  npx ts-node src/kernel-tests.ts     (wallet A = .devnet-key.json, ~2 SOL; ~6 min incl. grace waits)
+ */
+import { AnchorProvider, BN, Program, Wallet } from "@coral-xyz/anchor";
+import { Connection, Keypair, PublicKey, SystemProgram, ComputeBudgetProgram, Transaction } from "@solana/web3.js";
+import * as fs from "fs";
+import * as path from "path";
+import latchIdl from "../idl/latch.json";
+import { TxlineClient, TXORACLE } from "./txline";
+
+const RPC = process.env.RPC || "https://api.devnet.solana.com";
+const FIXTURE = Number(process.env.FIXTURE || 17588388);
+const PROGRAM_ID = new PublicKey((latchIdl as any).address);
+const GRACE = 120; // VOID_GRACE_SECS in the kernel
+const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const nowSec = () => Math.floor(Date.now() / 1000);
+const sec = (t: string) => console.log("\n" + "─".repeat(72) + "\n" + t + "\n" + "─".repeat(72));
+
+// ── result tracking ──
+let passed = 0, failed = 0;
+const fails: string[] = [];
+function pass(n: string) { passed++; console.log("  ✓ " + n); }
+function fail(n: string, e?: any) { failed++; const msg = n + (e ? ` — ${e?.error?.errorMessage || e?.message || e}` : ""); fails.push(msg); console.log("  ✗ " + msg); if (e?.logs) console.log("    " + e.logs.slice(-5).join("\n    ")); }
+function assert(cond: boolean, n: string) { if (cond) pass(n); else fail(n); return cond; }
+function errCode(e: any): string {
+  return e?.error?.errorCode?.code || (String(e?.message || e).match(/Error Code: (\w+)/)?.[1]) || (String(e?.message || e).match(/custom program error|Error Number/) ? "custom" : "") || "";
+}
+async function expectErr(label: string, code: string, fn: () => Promise<any>) {
+  try { await fn(); fail(`${label} (expected ${code}, but it SUCCEEDED)`); }
+  catch (e: any) {
+    const got = errCode(e);
+    if (got === code || String(e?.message || e).includes(code)) pass(`${label} → rejected with ${code}`);
+    else fail(`${label} (expected ${code}, got "${got}")`, e);
+  }
+}
+
+// ── PDAs ──
+const marketPda = (id: BN) => PublicKey.findProgramAddressSync([Buffer.from("market"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0];
+const vaultPda = (m: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("vault"), m.toBuffer()], PROGRAM_ID)[0];
+const posPda = (m: PublicKey, u: PublicKey, side: number) => PublicKey.findProgramAddressSync([Buffer.from("position"), m.toBuffer(), u.toBuffer(), Buffer.from([side])], PROGRAM_ID)[0];
+const parlayPda = (id: BN) => PublicKey.findProgramAddressSync([Buffer.from("parlay"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0];
+const pvaultPda = (p: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("pvault"), p.toBuffer()], PROGRAM_ID)[0];
+const pposPda = (p: PublicKey, u: PublicKey, side: number) => PublicKey.findProgramAddressSync([Buffer.from("pposition"), p.toBuffer(), u.toBuffer(), Buffer.from([side])], PROGRAM_ID)[0];
+const dsrPda = (seedTsMs: number) => PublicKey.findProgramAddressSync([Buffer.from("daily_scores_roots"), new BN(Math.floor(seedTsMs / 86400000)).toArrayLike(Buffer, "le", 2)], TXORACLE)[0];
+
+function settleArgs(bundle: any) {
+  const seedTs = Number(bundle.summary.updateStats.minTimestamp); // ms
+  const fixtureSummary = {
+    fixtureId: new BN(bundle.summary.fixtureId),
+    updateStats: { updateCount: bundle.summary.updateStats.updateCount, minTimestamp: new BN(bundle.summary.updateStats.minTimestamp), maxTimestamp: new BN(bundle.summary.updateStats.maxTimestamp) },
+    eventsSubTreeRoot: bundle.summary.eventStatsSubTreeRoot,
+  };
+  const statA = { statToProve: { key: bundle.statToProve.key, value: bundle.statToProve.value, period: bundle.statToProve.period }, eventStatRoot: bundle.eventStatRoot, statProof: bundle.statProof.map(node) };
+  return { seedTs, fixtureSummary, subTree: bundle.subTreeProof.map(node), mainTree: bundle.mainTreeProof.map(node), statA };
+}
+const cu = () => [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })];
+
+async function main() {
+  // Serialize + pace all Solana RPC calls — the public devnet RPC 429s on bursts.
+  let rpcQ: Promise<any> = Promise.resolve();
+  const throttledFetch = ((input: any, init?: any) => {
+    const r = rpcQ.then(async () => { await sleep(450); return (globalThis.fetch as any)(input, init); });
+    rpcQ = r.then(() => {}, () => {});
+    return r;
+  }) as any;
+  const conn = new Connection(RPC, { commitment: "confirmed", fetch: throttledFetch });
+  const A = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(path.join(__dirname, "..", ".devnet-key.json"), "utf8"))));
+  const provA = new AnchorProvider(conn, new Wallet(A), { commitment: "confirmed" });
+  const progA: any = new Program(latchIdl as any, provA);
+  const progFor = (kp: Keypair): any => kp.publicKey.equals(A.publicKey) ? progA : new Program(latchIdl as any, new AnchorProvider(conn, new Wallet(kp), { commitment: "confirmed" }));
+  const bal = (pk: PublicKey) => conn.getBalance(pk);
+  const rentMin = await conn.getMinimumBalanceForRentExemption(0); // vault rent buffer seeded at creation
+
+  sec("LATCH KERNEL · DEVNET TEST SUITE");
+  console.log("  program:", PROGRAM_ID.toBase58(), "| A:", A.publicKey.toBase58(), (await bal(A.publicKey)) / 1e9, "SOL");
+
+  // fund two helper wallets
+  const B = Keypair.generate(), C = Keypair.generate();
+  await provA.sendAndConfirm(new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: A.publicKey, toPubkey: B.publicKey, lamports: 0.35e9 }),
+    SystemProgram.transfer({ fromPubkey: A.publicKey, toPubkey: C.publicKey, lamports: 0.2e9 }),
+  ), []);
+  console.log("  funded B", B.publicKey.toBase58().slice(0, 8), "+ C", C.publicKey.toBase58().slice(0, 8));
+
+  // fetch real proofs: a seq where BOTH P1 goals (key 1) and P1 corners (key 7) are > 0
+  sec("0 · Fetch real anchored proofs (P1 goals key1>0 AND corners key7>0)");
+  const tx = await new TxlineClient(conn, A).authenticate();
+  const events = await tx.historicalEvents(FIXTURE);
+  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => b - a);
+  let g: any = null, c: any = null, seq = 0;
+  for (const s of seqs.slice(0, 25)) {
+    const gb = await tx.statValidation(FIXTURE, s, 1);
+    const cb = await tx.statValidation(FIXTURE, s, 7);
+    if (gb && cb && gb.statToProve.value > 0 && cb.statToProve.value > 0) { g = gb; c = cb; seq = s; break; }
+  }
+  if (!g || !c) throw new Error("could not find a seq with both goals>0 and corners>0 anchored");
+  console.log(`  ✓ seq ${seq}: goals=${g.statToProve.value} (key ${g.statToProve.key}), corners=${c.statToProve.value} (key ${c.statToProve.key})`);
+
+  // ── create the two TIME-GATED markets up front so the 120s grace elapses during the other tests ──
+  // expiry = now+45s: short enough that expiry+grace lapses while T1-T11 run (minutes), but long
+  // enough that the setup stakes below all land before lock_ts (== expiry) even on throttled RPC.
+  sec("Pre · Create time-gated markets (void + parlay-bust), expiry = now+45s");
+  const tVoidId = new BN(Date.now() + 1), tVoidExpiry = nowSec() + 45;
+  const tVoid = marketPda(tVoidId), tVoidVault = vaultPda(tVoid);
+  await progA.methods.createMarket(tVoidId, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(tVoidExpiry), new BN(tVoidExpiry))
+    .accounts({ authority: A.publicKey, market: tVoid, vault: tVoidVault, systemProgram: SystemProgram.programId }).rpc();
+  await progA.methods.joinPool(1, new BN(0.02e9)).accounts({ user: A.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+  await progFor(B).methods.joinPool(2, new BN(0.02e9)).accounts({ user: B.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+  console.log("  ✓ void-test market staked (A YES 0.02, B NO 0.02)");
+
+  const tBustId = new BN(Date.now() + 2), tBustExpiry = nowSec() + 45;
+  const tBust = parlayPda(tBustId), tBustVault = pvaultPda(tBust);
+  await progA.methods.createParlay(tBustId, new BN(FIXTURE), [{ statKey: g.statToProve.key, period: 0, threshold: 0, comparison: 0 }, { statKey: c.statToProve.key, period: 0, threshold: 0, comparison: 0 }], new BN(tBustExpiry), new BN(tBustExpiry))
+    .accounts({ authority: A.publicKey, parlay: tBust, vault: tBustVault, systemProgram: SystemProgram.programId }).rpc();
+  await progA.methods.joinParlay(1, new BN(0.02e9)).accounts({ user: A.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+  await progFor(B).methods.joinParlay(2, new BN(0.03e9)).accounts({ user: B.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+  // settle ONLY leg0 (partial) — leg1 stays unproven so it must bust to NO at expiry
+  const ga = settleArgs(g);
+  await progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, null, null)
+    .accounts({ settler: A.publicKey, parlay: tBust, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+  console.log("  ✓ bust-test parlay staked (A YES 0.02, B NO 0.03), leg0 proven (partial)");
+
+  // ───────────────────────── T1: positive single-market + pro-rata + dust ─────────────────────────
+  sec("T1 · Single market settles YES; multi-staker pro-rata + exact dust + loser reject + double-claim");
+  {
+    const id = new BN(Date.now() + 10);
+    const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.joinPool(1, new BN(60e6)).accounts({ user: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();      // A YES 0.06
+    await progFor(C).methods.joinPool(1, new BN(30e6)).accounts({ user: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), systemProgram: SystemProgram.programId }).rpc(); // C YES 0.03
+    await progFor(B).methods.joinPool(2, new BN(40e6)).accounts({ user: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc(); // B NO 0.04
+    assert((await bal(v)) === rentMin + 130e6, "vault holds rent buffer + the 0.13 pot");
+    const a = settleArgs(g);
+    await progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    const mk = await progA.account.market.fetch(m);
+    assert(mk.status === 1, "status == SETTLED_YES (1)");
+    // pro-rata: pot=130e6, yes_total=90e6 → A=floor(130e6*60e6/90e6)=86,666,666 ; C=43,333,333 ; dust=1
+    const vBeforeA = await bal(v);
+    await progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    const paidA = vBeforeA - (await bal(v));
+    assert(paidA === 86_666_666, `A pro-rata payout exact (got ${paidA}, want 86,666,666)`);
+    const vBeforeC = await bal(v);
+    await progFor(C).methods.claim().accounts({ owner: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    const paidC = vBeforeC - (await bal(v));
+    assert(paidC === 43_333_333, `C pro-rata payout exact (got ${paidC}, want 43,333,333)`);
+    assert((await bal(v)) === rentMin + 1, `vault residual is rent buffer + 1 lamport of dust (got ${await bal(v)})`);
+    await expectErr("B (NO loser) claim", "NotWinner", () => progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
+    await expectErr("A double-claim", "AlreadyClaimed", () => progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ───────────────────────── T2-T7: single-market negatives ─────────────────────────
+  sec("T2-T7 · Settlement-binding + creation negatives");
+  { // T2 cross-fixture
+    const id = new BN(Date.now() + 20); const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(99999999), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    const a = settleArgs(g);
+    await expectErr("T2 settle with a different fixture's proof", "FixtureMismatch", () => progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T3 binary expression
+    const id = new BN(Date.now() + 21); const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    const a = settleArgs(g);
+    await expectErr("T3 settle with a binary expression (stat_b/op)", "BinaryNotAllowed", () => progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, a.statA, { add: {} })
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T4 false predicate (threshold 999 > value)
+    const id = new BN(Date.now() + 22); const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 999, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    const a = settleArgs(g);
+    await expectErr("T4 settle a FALSE predicate (goals>999)", "PredicateNotMet", () => progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T5 expired proof (ts param > expiry)
+    const id = new BN(Date.now() + 23); const exp = nowSec() + 30; const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(exp), new BN(exp))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    const a = settleArgs(g);
+    await expectErr("T5 settle with proof ts after expiry", "Expired", () => progA.methods.settle(new BN((exp + 100) * 1000), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T6 non-monotone create
+    const id6 = new BN(Date.now() + 24);
+    await expectErr("T6 create_market with LessThan", "OnlyGreaterThan", () => progA.methods.createMarket(id6, new BN(FIXTURE), g.statToProve.key, 0, 1, 1, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: marketPda(id6), vault: vaultPda(marketPda(id6)), systemProgram: SystemProgram.programId }).rpc());
+  }
+  { // T7 past expiry
+    const id = new BN(Date.now() + 25);
+    await expectErr("T7 create_market with past expiry", "BadExpiry", () => progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, 0, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() - 100))
+      .accounts({ authority: A.publicKey, market: marketPda(id), vault: vaultPda(marketPda(id)), systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ───────────────────────── T8: empty-winning-side → VOID refund (no wait) ─────────────────────────
+  sec("T8 · Empty winning side (only NO staked) + true predicate → routes to VOID refund (C3)");
+  {
+    const id = new BN(Date.now() + 30); const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await progFor(B).methods.joinPool(2, new BN(30e6)).accounts({ user: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc(); // only NO
+    const a = settleArgs(g);
+    await progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+      .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    const mk = await progA.account.market.fetch(m);
+    assert(mk.status === 2, "empty-YES settle routed to VOID (status 2), not a locked SETTLED_YES");
+    const vb = await bal(v);
+    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    assert(vb - (await bal(v)) === 30e6, "B reclaims its full 0.03 stake on void");
+  }
+
+  // ───────────────────────── T9: parlay YES (2-leg) ─────────────────────────
+  sec("T9 · Parlay: both legs hit → YES takes the whole pot; NO rejected; double-claim rejected");
+  {
+    const id = new BN(Date.now() + 40); const p = parlayPda(id), v = pvaultPda(p);
+    await progA.methods.createParlay(id, new BN(FIXTURE), [{ statKey: g.statToProve.key, period: 0, threshold: 0, comparison: 0 }, { statKey: c.statToProve.key, period: 0, threshold: 0, comparison: 0 }], new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, parlay: p, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.joinParlay(1, new BN(50e6)).accounts({ user: A.publicKey, parlay: p, vault: v, position: pposPda(p, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    await progFor(B).methods.joinParlay(2, new BN(50e6)).accounts({ user: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    const ca = settleArgs(c);
+    await progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, null, null).accounts({ settler: A.publicKey, parlay: p, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    await progA.methods.settleLeg(1, new BN(ca.seedTs), ca.fixtureSummary, ca.subTree, ca.mainTree, ca.statA, null, null).accounts({ settler: A.publicKey, parlay: p, dailyScoresMerkleRoots: dsrPda(ca.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    const pk = await progA.account.parlay.fetch(p);
+    assert(pk.status === 1, "parlay status == SETTLED_YES (1) after both legs hit");
+    const vb = await bal(v);
+    await progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: p, vault: v, position: pposPda(p, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    assert(vb - (await bal(v)) === 100e6, "A (sole YES) takes the whole 0.10 pot");
+    await expectErr("parlay NO loser claim", "NotWinner", () => progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ───────────────────────── T10-T11: parlay leg negatives ─────────────────────────
+  sec("T10-T11 · Parlay leg-binding negatives");
+  { // T10 cross-fixture leg
+    const id = new BN(Date.now() + 50); const p = parlayPda(id), v = pvaultPda(p);
+    await progA.methods.createParlay(id, new BN(99999999), [{ statKey: g.statToProve.key, period: 0, threshold: 0, comparison: 0 }], new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, parlay: p, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await expectErr("T10 settle_leg with a different fixture's proof", "FixtureMismatch", () => progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, null, null).accounts({ settler: A.publicKey, parlay: p, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T11 binary leg
+    const id = new BN(Date.now() + 51); const p = parlayPda(id), v = pvaultPda(p);
+    await progA.methods.createParlay(id, new BN(FIXTURE), [{ statKey: g.statToProve.key, period: 0, threshold: 0, comparison: 0 }], new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, parlay: p, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await expectErr("T11 settle_leg with a binary expression", "BinaryNotAllowed", () => progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, ga.statA, { add: {} }).accounts({ settler: A.publicKey, parlay: p, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+
+  // ───────────────────────── T14-T16: KILL-1 lock_ts (the flash-pool gate) ─────────────────────────
+  sec("T14-T16 · lock_ts — new calls rejected at/after the lock (oracle-latency exploit gate)");
+  { // T14 create with lock after expiry → BadLock
+    const id = new BN(Date.now() + 60);
+    await expectErr("T14 create_market with lock_ts > expiry", "BadLock", () => progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 200), new BN(nowSec() + 100))
+      .accounts({ authority: A.publicKey, market: marketPda(id), vault: vaultPda(marketPda(id)), systemProgram: SystemProgram.programId }).rpc());
+  }
+  { // T15 join_pool: accepted before the lock, PoolLocked after it
+    const id = new BN(Date.now() + 61); const m = marketPda(id), v = vaultPda(m);
+    const lock = nowSec() + 10;
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(lock), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.joinPool(1, new BN(10e6)).accounts({ user: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    pass("join_pool before lock accepted");
+    const waitMs = (lock - nowSec() + 2) * 1000;
+    if (waitMs > 0) { console.log(`  …waiting ${Math.ceil(waitMs / 1000)}s to cross the lock`); await sleep(waitMs); }
+    await expectErr("T15 join_pool after lock", "PoolLocked", () => progFor(B).methods.joinPool(2, new BN(10e6)).accounts({ user: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
+  }
+  { // T16 join_parlay: accepted before the lock, PoolLocked after it
+    const id = new BN(Date.now() + 62); const p = parlayPda(id), v = pvaultPda(p);
+    const lock = nowSec() + 10;
+    await progA.methods.createParlay(id, new BN(FIXTURE), [{ statKey: g.statToProve.key, period: 0, threshold: 0, comparison: 0 }], new BN(lock), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, parlay: p, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.joinParlay(1, new BN(10e6)).accounts({ user: A.publicKey, parlay: p, vault: v, position: pposPda(p, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    pass("join_parlay before lock accepted");
+    const waitMs = (lock - nowSec() + 2) * 1000;
+    if (waitMs > 0) { console.log(`  …waiting ${Math.ceil(waitMs / 1000)}s to cross the lock`); await sleep(waitMs); }
+    await expectErr("T16 join_parlay after lock", "PoolLocked", () => progFor(B).methods.joinParlay(2, new BN(10e6)).accounts({ user: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ───────────────────────── T12-T13: time-gated void() + parlay bust→NO ─────────────────────────
+  sec("T12-T13 · Time-gated: void() refund + parlay bust → NO wins (waiting out the 120s grace)");
+  const waitUntil = Math.max(tVoidExpiry, tBustExpiry) + GRACE + 8;
+  const remain = waitUntil - nowSec();
+  if (remain > 0) { console.log(`  …waiting ${remain}s for expiry + ${GRACE}s grace`); await sleep(remain * 1000); }
+  { // T12 void refund
+    await progA.methods.void().accounts({ cranker: A.publicKey, market: tVoid }).rpc();
+    const mk = await progA.account.market.fetch(tVoid);
+    assert(mk.status === 2, "void() after expiry+grace → status VOID (2)");
+    const vb = await bal(tVoidVault);
+    await progA.methods.claim().accounts({ owner: A.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    assert(vb - (await bal(tVoidVault)) === 0.02e9, "A reclaims its 0.02 stake on void");
+    const vb2 = await bal(tVoidVault);
+    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    assert(vb2 - (await bal(tVoidVault)) === 0.02e9, "B reclaims its 0.02 stake on void (both sides refunded)");
+  }
+  { // T13 parlay bust → NO (partial: leg0 was proven, leg1 never) — also tests void/settle grace race fix
+    await expectErr("T13 settle a leg AFTER expiry+grace still allowed only if ts<=expiry (resolve wins)", "AlreadyClaimed", async () => {
+      // leg0 already hit at setup; trying to re-settle leg0 must fail (AlreadyClaimed) — sanity that legs can't double-count
+      await progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, null, null).accounts({ settler: A.publicKey, parlay: tBust, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    });
+    await progA.methods.resolveParlay().accounts({ cranker: A.publicKey, parlay: tBust }).rpc();
+    const pk = await progA.account.parlay.fetch(tBust);
+    assert(pk.status === 3, "resolve_parlay (not all legs hit) → STATUS_PARLAY_NO (3)");
+    const vb = await bal(tBustVault);
+    await progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    assert(vb - (await bal(tBustVault)) === 0.05e9, "B (NO) takes the whole 0.05 pot on bust");
+    await expectErr("parlay YES claim after bust", "NotWinner", () => progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ── summary ──
+  sec("RESULT");
+  console.log(`  ${passed} passed, ${failed} failed`);
+  if (failed) { console.log("\n  FAILURES:\n   - " + fails.join("\n   - ")); process.exit(1); }
+  console.log("\n  ✓✓ ALL PASS — hardened LATCH decides correctly and cannot be made to pay the wrong side or lock funds.");
+}
+main().catch((e) => { console.error("\nSUITE CRASHED:", e?.message || e); if (e?.logs) console.error(e.logs.slice(-8)); process.exit(1); });

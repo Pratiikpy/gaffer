@@ -1,0 +1,1499 @@
+{
+  "address": "HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG",
+  "metadata": {
+    "name": "latch",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "claim",
+      "docs": [
+        "Claim winnings (settled-YES: pro-rata share of the whole pot) or a refund (voided: own stake)."
+      ],
+      "discriminator": [
+        62,
+        198,
+        214,
+        193,
+        213,
+        159,
+        108,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_parlay",
+      "docs": [
+        "Claim a parlay payout (winning side splits the pot pro-rata) or a void refund."
+      ],
+      "discriminator": [
+        47,
+        40,
+        30,
+        204,
+        201,
+        172,
+        97,
+        250
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "parlay",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay.parlay_id",
+                "account": "Parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_market",
+      "docs": [
+        "Open a parimutuel market on one monotone over-threshold soccer stat predicate."
+      ],
+      "discriminator": [
+        103,
+        226,
+        97,
+        235,
+        200,
+        188,
+        251,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        },
+        {
+          "name": "fixture_id",
+          "type": "i64"
+        },
+        {
+          "name": "stat_key",
+          "type": "u32"
+        },
+        {
+          "name": "period",
+          "type": "i32"
+        },
+        {
+          "name": "threshold",
+          "type": "i32"
+        },
+        {
+          "name": "comparison",
+          "type": "u8"
+        },
+        {
+          "name": "lock_ts",
+          "type": "i64"
+        },
+        {
+          "name": "expiry_ts",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "create_parlay",
+      "docs": [
+        "Open a parlay of N monotone over-threshold legs. YES = every leg hits; NO = it busts."
+      ],
+      "discriminator": [
+        127,
+        36,
+        125,
+        173,
+        162,
+        128,
+        246,
+        207
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "parlay",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "parlay_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "parlay_id",
+          "type": "u64"
+        },
+        {
+          "name": "fixture_id",
+          "type": "i64"
+        },
+        {
+          "name": "legs",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "LegArg"
+              }
+            }
+          }
+        },
+        {
+          "name": "lock_ts",
+          "type": "i64"
+        },
+        {
+          "name": "expiry_ts",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "join_parlay",
+      "docs": [
+        "Stake YES (all legs hit) or NO (it busts) into the parlay's non-custodial vault."
+      ],
+      "discriminator": [
+        211,
+        153,
+        155,
+        3,
+        234,
+        240,
+        124,
+        217
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "parlay",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay.parlay_id",
+                "account": "Parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "join_pool",
+      "docs": [
+        "Stake `amount` lamports on a side. Funds move into the non-custodial vault PDA."
+      ],
+      "discriminator": [
+        14,
+        65,
+        62,
+        16,
+        116,
+        17,
+        195,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "resolve_parlay",
+      "docs": [
+        "After expiry + grace, if not all legs hit, the parlay busts → NO wins. The grace gives the",
+        "keeper time to settle a final within-window leg first, so YES can't be denied at the boundary."
+      ],
+      "discriminator": [
+        169,
+        91,
+        103,
+        223,
+        17,
+        137,
+        89,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "parlay",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay.parlay_id",
+                "account": "Parlay"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Self-settle: prove the market's predicate against the on-chain root via `validate_stat`.",
+        "On a true result the market settles YES (final-on-first-proof). The kernel never decides",
+        "the outcome — it only reads `validate_stat`'s verdict."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "daily_scores_merkle_roots",
+          "docs": [
+            "passed through to validate_stat (read-only there)."
+          ]
+        },
+        {
+          "name": "txoracle_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "ts",
+          "type": "i64"
+        },
+        {
+          "name": "fixture_summary",
+          "type": {
+            "defined": {
+              "name": "ScoresBatchSummary"
+            }
+          }
+        },
+        {
+          "name": "fixture_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "main_tree_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "stat_a",
+          "type": {
+            "defined": {
+              "name": "StatTerm"
+            }
+          }
+        },
+        {
+          "name": "stat_b",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "StatTerm"
+              }
+            }
+          }
+        },
+        {
+          "name": "op",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "BinaryExpression"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "settle_leg",
+      "docs": [
+        "Prove one leg hit via validate_stat. When every leg is proven, the parlay settles YES."
+      ],
+      "discriminator": [
+        96,
+        148,
+        220,
+        244,
+        50,
+        28,
+        212,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "signer": true
+        },
+        {
+          "name": "parlay",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  114,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "parlay.parlay_id",
+                "account": "Parlay"
+              }
+            ]
+          }
+        },
+        {
+          "name": "daily_scores_merkle_roots"
+        },
+        {
+          "name": "txoracle_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "leg_index",
+          "type": "u8"
+        },
+        {
+          "name": "ts",
+          "type": "i64"
+        },
+        {
+          "name": "fixture_summary",
+          "type": {
+            "defined": {
+              "name": "ScoresBatchSummary"
+            }
+          }
+        },
+        {
+          "name": "fixture_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "main_tree_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "stat_a",
+          "type": {
+            "defined": {
+              "name": "StatTerm"
+            }
+          }
+        },
+        {
+          "name": "stat_b",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "StatTerm"
+              }
+            }
+          }
+        },
+        {
+          "name": "op",
+          "type": {
+            "option": {
+              "defined": {
+                "name": "BinaryExpression"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "void",
+      "docs": [
+        "Void an unsettled market once it is past expiry + grace, enabling refunds. The grace window",
+        "gives the keeper time to settle a within-window YES first, so a NO staker cannot void a",
+        "rightful YES the instant expiry passes."
+      ],
+      "discriminator": [
+        55,
+        130,
+        74,
+        24,
+        235,
+        14,
+        16,
+        3
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Market",
+      "discriminator": [
+        219,
+        190,
+        213,
+        55,
+        0,
+        227,
+        198,
+        154
+      ]
+    },
+    {
+      "name": "Parlay",
+      "discriminator": [
+        122,
+        11,
+        112,
+        152,
+        79,
+        17,
+        172,
+        36
+      ]
+    },
+    {
+      "name": "Position",
+      "discriminator": [
+        170,
+        188,
+        143,
+        228,
+        122,
+        64,
+        247,
+        208
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Claimed",
+      "discriminator": [
+        217,
+        192,
+        123,
+        72,
+        108,
+        150,
+        248,
+        33
+      ]
+    },
+    {
+      "name": "MarketSettled",
+      "discriminator": [
+        237,
+        212,
+        22,
+        175,
+        201,
+        117,
+        215,
+        99
+      ]
+    },
+    {
+      "name": "MarketVoided",
+      "discriminator": [
+        217,
+        12,
+        138,
+        39,
+        108,
+        75,
+        89,
+        26
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotOpen",
+      "msg": "Market is not open"
+    },
+    {
+      "code": 6001,
+      "name": "BadSide",
+      "msg": "Invalid side"
+    },
+    {
+      "code": 6002,
+      "name": "ZeroStake",
+      "msg": "Stake must be > 0"
+    },
+    {
+      "code": 6003,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6004,
+      "name": "BadComparison",
+      "msg": "Invalid comparison"
+    },
+    {
+      "code": 6005,
+      "name": "BadOracleProgram",
+      "msg": "txoracle program account mismatch"
+    },
+    {
+      "code": 6006,
+      "name": "StatMismatch",
+      "msg": "Proof stat does not match the market"
+    },
+    {
+      "code": 6007,
+      "name": "FixtureMismatch",
+      "msg": "Proof fixture does not match the market"
+    },
+    {
+      "code": 6008,
+      "name": "BinaryNotAllowed",
+      "msg": "Binary expression not allowed for a single-stat market"
+    },
+    {
+      "code": 6009,
+      "name": "Expired",
+      "msg": "Proof snapshot is after the market window (ts > expiry)"
+    },
+    {
+      "code": 6010,
+      "name": "OnlyGreaterThan",
+      "msg": "Only GreaterThan (monotone over-threshold) markets are supported in v1"
+    },
+    {
+      "code": 6011,
+      "name": "BadExpiry",
+      "msg": "Expiry must be in the future"
+    },
+    {
+      "code": 6012,
+      "name": "BadLock",
+      "msg": "Lock must be in the future and no later than expiry"
+    },
+    {
+      "code": 6013,
+      "name": "PoolLocked",
+      "msg": "Pool is locked — no new calls after the cut-off"
+    },
+    {
+      "code": 6014,
+      "name": "NoVerdict",
+      "msg": "validate_stat returned no verdict"
+    },
+    {
+      "code": 6015,
+      "name": "PredicateNotMet",
+      "msg": "Predicate not met — not settleable yet"
+    },
+    {
+      "code": 6016,
+      "name": "NotExpired",
+      "msg": "Market not yet expired"
+    },
+    {
+      "code": 6017,
+      "name": "AlreadyClaimed",
+      "msg": "Already claimed"
+    },
+    {
+      "code": 6018,
+      "name": "NotWinner",
+      "msg": "Caller is not on the winning side"
+    },
+    {
+      "code": 6019,
+      "name": "NotResolved",
+      "msg": "Market not resolved"
+    },
+    {
+      "code": 6020,
+      "name": "BadLegs",
+      "msg": "Invalid parlay legs"
+    }
+  ],
+  "types": [
+    {
+      "name": "BinaryExpression",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Add"
+          },
+          {
+            "name": "Subtract"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Claimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Leg",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stat_key",
+            "type": "u32"
+          },
+          {
+            "name": "period",
+            "type": "i32"
+          },
+          {
+            "name": "threshold",
+            "type": "i32"
+          },
+          {
+            "name": "comparison",
+            "type": "u8"
+          },
+          {
+            "name": "hit",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LegArg",
+      "docs": [
+        "One leg of a parlay, as supplied at creation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stat_key",
+            "type": "u32"
+          },
+          {
+            "name": "period",
+            "type": "i32"
+          },
+          {
+            "name": "threshold",
+            "type": "i32"
+          },
+          {
+            "name": "comparison",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Market",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "fixture_id",
+            "type": "i64"
+          },
+          {
+            "name": "stat_key",
+            "type": "u32"
+          },
+          {
+            "name": "period",
+            "type": "i32"
+          },
+          {
+            "name": "threshold",
+            "type": "i32"
+          },
+          {
+            "name": "comparison",
+            "type": "u8"
+          },
+          {
+            "name": "lock_ts",
+            "type": "i64"
+          },
+          {
+            "name": "expiry_ts",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "type": "u8"
+          },
+          {
+            "name": "yes_total",
+            "type": "u64"
+          },
+          {
+            "name": "no_total",
+            "type": "u64"
+          },
+          {
+            "name": "settle_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketSettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "winning_side",
+            "type": "u8"
+          },
+          {
+            "name": "ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketVoided",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "market_id",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Parlay",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "parlay_id",
+            "type": "u64"
+          },
+          {
+            "name": "fixture_id",
+            "type": "i64"
+          },
+          {
+            "name": "legs",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Leg"
+                }
+              }
+            }
+          },
+          {
+            "name": "lock_ts",
+            "type": "i64"
+          },
+          {
+            "name": "expiry_ts",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "type": "u8"
+          },
+          {
+            "name": "yes_total",
+            "type": "u64"
+          },
+          {
+            "name": "no_total",
+            "type": "u64"
+          },
+          {
+            "name": "legs_hit",
+            "type": "u8"
+          },
+          {
+            "name": "settle_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Position",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProofNode",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "is_right_sibling",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoreStat",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "key",
+            "type": "u32"
+          },
+          {
+            "name": "value",
+            "type": "i32"
+          },
+          {
+            "name": "period",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoresBatchSummary",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fixture_id",
+            "type": "i64"
+          },
+          {
+            "name": "update_stats",
+            "type": {
+              "defined": {
+                "name": "ScoresUpdateStats"
+              }
+            }
+          },
+          {
+            "name": "events_sub_tree_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoresUpdateStats",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "update_count",
+            "type": "i32"
+          },
+          {
+            "name": "min_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "max_timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StatTerm",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stat_to_prove",
+            "type": {
+              "defined": {
+                "name": "ScoreStat"
+              }
+            }
+          },
+          {
+            "name": "event_stat_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "stat_proof",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "ProofNode"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

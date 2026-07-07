@@ -76,6 +76,26 @@ class TxlineServer {
     } catch { return []; }
   }
 
+  /** The fixture schedule — today's real matches with names, competition and kickoff (the real-fixture
+   * spine). Free devnet tier returns ~15 (WC + friendlies) in a +30d window from today. */
+  async fixturesSnapshot(): Promise<any[]> {
+    await this.ensure();
+    try {
+      const v = (await this.http.get("/api/fixtures/snapshot")).data;
+      return Array.isArray(v) ? v : (Array.isArray(v?.fixtures) ? v.fixtures : []);
+    } catch { return []; }
+  }
+
+  /** Latest event per action type for a fixture — a fast way to read the current scoreline without
+   * parsing the whole historical stream (38 entries for a finished match). */
+  async scoresSnapshot(fixtureId: number): Promise<any[]> {
+    await this.ensure();
+    try {
+      const v = (await this.http.get(`/api/scores/snapshot/${fixtureId}`)).data;
+      return Array.isArray(v) ? v : (Array.isArray(v?.events) ? v.events : (Array.isArray(v?.data) ? v.data : []));
+    } catch { return []; }
+  }
+
   async statValidation(fixtureId: number, seq: number, statKey: number, statKey2?: number): Promise<any | null> {
     await this.ensure();
     try {

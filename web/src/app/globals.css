@@ -39,3 +39,12 @@ body {
 .gf-pop { animation: gfPop .45s cubic-bezier(.2,.9,.3,1) both; }
 .gf-pulse { animation: gfPulse 1.3s infinite; }
 .gf-roll { animation: gfRoll .5s cubic-bezier(.2,.9,.3,1) both; }
+/* live money ticks — a number that just moved flashes its direction (trading-tape feel) */
+@keyframes gfTickUp { 0% { color: #059669; transform: translateY(-14%) } 100% { color: inherit; transform: none } }
+@keyframes gfTickDown { 0% { color: #dc2626; transform: translateY(14%) } 100% { color: inherit; transform: none } }
+.gf-tick-up { animation: gfTickUp .9s ease-out both; }
+.gf-tick-down { animation: gfTickDown .9s ease-out both; }
+/* the pinned live-call ticker slides up from the nav */
+@keyframes gfTicker { from { transform: translateY(100%); opacity: 0 } to { transform: none; opacity: 1 } }
+.gf-ticker { animation: gfTicker .35s cubic-bezier(.2,.9,.3,1) both; }
+@media (prefers-reduced-motion: reduce) { .gf-ring, .gf-pop, .gf-pulse, .gf-roll, .gf-tick-up, .gf-tick-down, .gf-ticker { animation: none; } }

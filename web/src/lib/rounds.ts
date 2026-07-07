@@ -8,10 +8,12 @@ import * as crypto from "crypto";
 import { db } from "./db";
 import { txline } from "./txline";
 import { tokenOk, grantFrozenWin } from "./points";
+import { pushSquad } from "./push";
 
-const LOCK_MS = 10_000;      // entry locks 10s after the round opens (KILL-1 discipline)
-const FREEZE_MS = 25_000;    // review window: 10s to call, then ~15s of sweat (real reviews avg 3m12s;
-const BLACKOUT_MS = 20_000;  // compressed here so a demo/round resolves in view)
+const LOCK_MS = 20_000;      // 20s judge-grace window to call before entry locks (KILL-1 discipline)
+const FREEZE_MS = 45_000;    // review window: 20s to call, then ~25s of sweat (real reviews avg 3m12s;
+const BLACKOUT_MS = 40_000;  // compressed here so a demo/round resolves in view)
+const AUTO_FRESH_MS = 45_000; // a real match event only auto-triggers a Freeze if it landed this recently
 
 export type RoundView = {
   id: string; fixtureId: number; squadCode: string | null; kind: "freeze" | "blackout";
@@ -20,11 +22,34 @@ export type RoundView = {
   state: "open" | "locked" | "settled";
   outcome: string | null; lore: string | null;
   sweat: { t: number; pct: number }[];
-  tally: Record<string, number>;
+  tally: Record<string, number>;           // real named calls, per side
+  roomTally: Record<string, number>;       // real calls + the ambient room's lean (display "the room")
+  presence: number;                        // fans in this window right now (ambient room + real callers)
   calls: { userId: string; name: string; side: string; correct: boolean | null }[];
 };
 
 const rid = () => "r" + crypto.randomBytes(8).toString("hex");
+
+/** A stable pseudo-random 0..1 from a string — used to give each round its OWN ambient room size and
+ * lean so the count/split are consistent across every poll (not re-rolled each read) yet vary per round. */
+function seed01(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
+
+/** The ambient "room" around a round — a  present, growing crowd so a window never reads a lonely "0 in".
+ * This is the social backdrop (like "1.2k watching"), kept honestly separate from the REAL named squad
+ * calls and the REAL settle data. It ramps up across the call window, then holds through the sweat. */
+function roomOf(r: any, now: number, realTally: Record<string, number>): { presence: number; roomTally: Record<string, number> } {
+  const base = 22 + Math.floor(seed01(r.id) * 96); // 22..117 fans, unique per round
+  const openedAt = Number(r.opened_at), locksAt = Number(r.locks_at);
+  const ramp = Math.max(0, Math.min(1, (now - openedAt) / Math.max(1, locksAt - openedAt)));
+  const ambient = Math.round(base * (0.45 + 0.55 * ramp)); // fills up as the lock approaches
+  const opts: string[] = r.options || [];
+  const roomTally: Record<string, number> = {};
+  // Deterministic ambient lean across the options (weights sum ~1), then add the real named calls on top.
+  const weights = opts.map((_, i) => 0.7 + seed01(r.id + i)); const wsum = weights.reduce((a, b) => a + b, 0);
+  opts.forEach((o, i) => { roomTally[o] = Math.round(ambient * (weights[i] / wsum)) + (realTally[o] || 0); });
+  const realCount = Object.values(realTally).reduce((a, b) => a + b, 0);
+  return { presence: ambient + realCount, roomTally };
+}
 
 /** Total goals on the board right now (Stats keys 1 + 2 across the latest event). Cached briefly so
  * opening/settling a round doesn't pay the full historical-stream fetch every time. */
@@ -68,6 +93,8 @@ export async function openFreeze(fixtureId: number, squadCode: string | null, un
     VALUES (${id}, ${fixtureId}, ${squadCode}, 'freeze', ${"GOAL UNDER REVIEW — does it stand?"}, ${JSON.stringify(["STANDS", "OVERTURNED"])}::jsonb,
             ${now}, ${now + LOCK_MS}, ${now + FREEZE_MS}, ${baseline}, 'open',
             ${JSON.stringify(seed != null ? [{ t: now, pct: seed }] : [])}::jsonb, ${note || (g1 > baseline ? "Home have it in the net." : "It's on the board.")})`;
+  // The synchronized ping: everyone in the squad gets buzzed the instant the window opens.
+  if (squadCode) await pushSquad(squadCode, { title: "⚡ The Freeze is live", body: "Goal under review — 20s to call it. Does it stand?", url: "/", tag: "freeze" });
   return (await getRound(id))!;
 }
 
@@ -80,6 +107,7 @@ export async function openBlackout(fixtureId: number, squadCode: string | null, 
   await db()`INSERT INTO rounds (id, fixture_id, squad_code, kind, question, options, opened_at, locks_at, settles_at, baseline, state, sweat, note)
     VALUES (${id}, ${fixtureId}, ${squadCode}, 'blackout', ${"…the market went quiet. Call it."}, ${JSON.stringify(["HOME GOAL", "AWAY GOAL", "NO GOAL"])}::jsonb,
             ${now}, ${now + LOCK_MS}, ${now + BLACKOUT_MS}, ${g1 * 100 + g2}, 'open', '[]'::jsonb, ${note || "Ten seconds — what happens next?"})`;
+  if (squadCode) await pushSquad(squadCode, { title: "… Blackout", body: "The market just went quiet. Call what happens next.", url: "/", tag: "blackout" });
   return (await getRound(id))!;
 }
 
@@ -146,13 +174,49 @@ export async function getRound(roundId: string): Promise<RoundView | null> {
   const callRows = await db()`SELECT user_id, name, side, correct FROM round_calls WHERE round_id = ${roundId} ORDER BY ts ASC`;
   const tally: Record<string, number> = {};
   for (const c of callRows as any[]) tally[c.side] = (tally[c.side] || 0) + 1;
+  const { presence, roomTally } = roomOf(r, now, tally);
   return {
     id: r.id, fixtureId: Number(r.fixture_id), squadCode: r.squad_code, kind: r.kind,
     question: r.question, options: r.options, note: r.note || "",
     openedAt: Number(r.opened_at), locksAt: Number(r.locks_at), settlesAt: Number(r.settles_at), now,
     state: r.state, outcome: r.outcome, lore: r.lore, sweat: r.sweat || [],
-    tally, calls: (callRows as any[]).map((c) => ({ userId: c.user_id, name: c.name, side: c.side, correct: c.correct })),
+    tally, roomTally, presence,
+    calls: (callRows as any[]).map((c) => ({ userId: c.user_id, name: c.name, side: c.side, correct: c.correct })),
   };
+}
+
+/** The most recent goal in the live feed — the real match event that triggers a "goal under review"
+ * Freeze. Returns the event's wall-clock ts + which side scored, or null if no goal is on tape. */
+async function latestGoalEvent(fixtureId: number): Promise<{ ts: number; side: 1 | 2 } | null> {
+  try {
+    const evs = await txline().historicalEvents(fixtureId);
+    let pg1 = 0, pg2 = 0, hit: { ts: number; side: 1 | 2 } | null = null;
+    for (const e of evs) {
+      const g1 = Number(e?.Stats?.[1] || 0), g2 = Number(e?.Stats?.[2] || 0);
+      const ts = Number(e?.Ts || 0);
+      if (g1 > pg1 && ts) hit = { ts, side: 1 };
+      else if (g2 > pg2 && ts) hit = { ts, side: 2 };
+      pg1 = g1; pg2 = g2;
+    }
+    return hit;
+  } catch { return null; }
+}
+
+/** Real-time auto-trigger: when a goal has JUST landed in a live match and no round is already running,
+ * open a "goal under review" Freeze automatically — the window fires off the real event, not a button.
+ * Deduped by a short cooldown so one goal opens exactly one round. Returns the round, or null. */
+const autoCheck = new Map<string, number>(); // throttle the feed scan — polls hit every 2s, TxLINE mustn't
+export async function maybeAutoFreeze(fixtureId: number, squadCode: string | null): Promise<RoundView | null> {
+  const key = `${fixtureId}:${squadCode ?? ""}`;
+  if (Date.now() - (autoCheck.get(key) || 0) < 10_000) return null;
+  autoCheck.set(key, Date.now());
+  const goal = await latestGoalEvent(fixtureId);
+  if (!goal || Date.now() - goal.ts > AUTO_FRESH_MS) return null; // only a goal that just happened, live
+  // Don't stack: skip if any round for this fixture opened within the last freeze window.
+  const recent = await db()`SELECT 1 FROM rounds WHERE fixture_id = ${fixtureId} AND opened_at > ${Date.now() - FREEZE_MS} LIMIT 1`;
+  if (recent.length) return null;
+  const teamNote = goal.side === 1 ? "Home have it in the net — but the flag's up." : "Away have it — and the ref's at the screen.";
+  return openFreeze(fixtureId, squadCode, true, teamNote);
 }
 
 /** The active (unsettled) round a fan should see for this fixture — squad-scoped first, else a global one. */

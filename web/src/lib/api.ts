@@ -47,6 +47,46 @@ export function streakGridText(cells: ("hit" | "freeze" | "miss")[], streak: num
     : "Run's over. New one starts today.";
   return `${row}\n${tail}\nGAFFER`;
 }
+export async function getFixtures(): Promise<any[]> {
+  const r = await fetch("/api/fixtures", { cache: "no-store" });
+  return r.ok ? (await r.json()).fixtures || [] : [];
+}
+/** Live commercial-floor state from the on-chain Config PDA — today's rake (0), the cap, winnings-only. */
+export async function getConfig(): Promise<{ rakeBps: number; maxRakeBps: number; onWinningsOnly: boolean }> {
+  const r = await fetch("/api/config", { cache: "no-store" });
+  return r.ok ? await r.json() : { rakeBps: 0, maxRakeBps: 500, onWinningsOnly: true };
+}
+/** Ensure open pools exist. No arg → the hero "USA to score" pool (minted fresh if the last was
+ * collected). With a fixtureId → the standard home/away-to-score pair on that real scheduled match, so a
+ * live fixture never greets a fan with "no pools". Idempotent + cheap when pools are already open. */
+export async function provisionHero(fixtureId?: number): Promise<{ market?: string; markets?: string[]; created?: boolean } | null> {
+  const r = await fetch("/api/provision-hero", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fixtureId ? { fixtureId } : {}) });
+  return r.ok ? await r.json() : null;
+}
+/** The Gaffer's Take — an AI pundit one-liner for a real match moment (always returns a line). */
+export async function punditLine(payload: Record<string, unknown>): Promise<string> {
+  try {
+    const r = await fetch("/api/pundit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    return r.ok ? (await r.json()).line || "" : "";
+  } catch { return ""; }
+}
+/** Hi-Lo — deal a question over real match history / grade a guess (server-sealed answers). */
+export async function hiloDeal(): Promise<{ qid: string; home: string; away: string; stat: string; threshold: number } | null> {
+  const r = await fetch("/api/hilo", { cache: "no-store" });
+  return r.ok ? await r.json() : null;
+}
+export async function hiloGuess(payload: Record<string, unknown>): Promise<{ correct: boolean; actual: number; answer: string; points: number | null } | null> {
+  const r = await fetch("/api/hilo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  return r.ok ? await r.json() : null;
+}
+export async function pushKey(): Promise<string> {
+  const r = await fetch("/api/push", { cache: "no-store" });
+  return r.ok ? (await r.json()).key || "" : "";
+}
+export async function pushSubscribe(payload: Record<string, unknown>): Promise<boolean> {
+  const r = await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  return r.ok;
+}
 export async function getNations(): Promise<{ name: string; flag: string; pts: number; fans: number }[]> {
   const r = await fetch("/api/nations", { cache: "no-store" });
   return r.ok ? (await r.json()).nations || [] : [];

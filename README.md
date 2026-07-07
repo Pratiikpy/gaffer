@@ -26,19 +26,25 @@ No jargon, no seed phrases, no token. It should feel like your group chat got a 
 
 1. Open **[gaffer-cyan.vercel.app](https://gaffer-cyan.vercel.app)** — no sign-up, no install.
 2. **Today** → lock in the free daily call (your streak starts).
-3. **Cash → Add funds** — tops up your in-app balance to play for real (devnet).
+3. **Cash → Add funds** — tops up your in-app balance with **free devnet play-coins** (a faucet, not a purchase).
 4. Back a pool (*"USA to score?"*), watch the projected payout move as others take the other side.
-5. **Squad** → start a squad, share the one-tap invite link, talk all tournament.
-6. **Live** → the match centre updates in real time as goals, cards and chances land.
+5. **Cash → Your calls → Collect** — the pool settles on the real result and pays you out, with a Proof-of-Payout receipt.
+6. **Live → The Freeze** → the signature synchronized round that opens the minute every sportsbook locks its doors.
+
+> **On money:** GAFFER runs today on **valueless devnet play-currency** — it's a free-to-play skill-and-social game, not real-money wagering. The innovation being demonstrated is the *payout technology*: instant, non-custodial, un-clawback, and provable. The path to real-money rails is real, but nothing of value is staked in this build.
 
 ## What's in the box
 
 | Layer | What it is |
 |---|---|
 | **LATCH kernel** | An Anchor (Solana) program: non-custodial parimutuel pools + N-leg parlays, settled by a CPI into TxLINE's on-chain `validate_stat`. Pays the winning side pro-rata; refunds automatically if a match is called off. **`lock_ts` closes the oracle-latency exploit** — no call can land after the cut-off. |
-| **Keeper** | An autonomous crank that discovers the anchored proof for an open pool and settles it with no human in the loop. |
-| **Web app** | Next.js 16 PWA — Today / Live / Slip / Squad / Nations / Cash / You. Server-authoritative points on Postgres, browser-signed on-chain calls, felt-not-shown copy throughout. |
-| **Data** | TxLINE live scores + consensus-odds streams, proxied server-side so credentials never touch the browser. |
+| **Commercial floor** | A capped (5%), currently-**0** protocol rake on winnings-only, living in a singleton on-chain config PDA. The app's fee line and revenue screen read the live number straight from chain — a verifiable, flip-a-switch revenue path, not a slide. |
+| **The Frozen Window** | The signature real-time round. During a live match a **real goal event auto-opens** a synchronized "goal under review — does it stand?" flash round: 20s to call, the room fills live, a Verdict Brief on settle, and a web-push ping to your whole squad the same second. Settles on the real goal-count delta. |
+| **The Receipt** | Every win fires a Proof-of-Payout card stamped with the odds you called it at (e.g. "Called at 23% · paid 2.50×"), a buried on-chain proof link, and a shareable branded OG image. |
+| **The Gaffer's Take** | An AI pundit (NVIDIA NIM) that reacts to real TxLINE feed moments — goal, red card, VAR verdict — with a one-line hot take and one-tap voice (browser TTS). Never blank: templated fallback if the model is slow. |
+| **Keeper** | An autonomous crank that discovers the anchored proof for an open pool and settles it with no human in the loop. Settlement is permissionless — the kernel re-verifies the proof, so anyone can crank and no one can settle a pool wrongly. |
+| **Web app** | Next.js 16 **installable PWA** — Today / Live / Slip / Squad / Nations / Cash / You. Server-authoritative points on Postgres, browser-signed on-chain calls, web push (VAPID), 18+ gate, mute-money + spoiler-safe modes, felt-not-shown copy throughout. |
+| **Data** | TxLINE live scores + consensus-odds + fixture streams, proxied server-side so credentials never touch the browser. |
 
 ### Architecture
 
@@ -52,8 +58,9 @@ No jargon, no seed phrases, no token. It should feel like your group chat got a 
 
 ## Proof it works
 
-- **Kernel test suite: 32/32 passing on devnet** — pro-rata payout to the lamport, empty-side→refund, `void()` both-sides refund, parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, and every settlement-binding negative (fixture/stat/binary/expiry/comparison). Run: `npx ts-node src/kernel-tests.ts`.
-- **End-to-end on devnet** — two independent wallets stake opposite sides; the market self-settles on a real World Cup proof; the winner claims the whole pot; the loser is rejected.
+- **Kernel test suite: 39/39 passing on devnet** — pro-rata payout to the lamport, empty-side→refund, `void()` both-sides refund, parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, the **capped rake** (exact fee split + cap + authority guards), and every settlement-binding negative (fixture/stat/binary/expiry/comparison). Run: `npx ts-node src/kernel-tests.ts`.
+- **The full stake → settle → PAID loop, proven on-chain** — a fresh wallet stakes YES on a finished, anchored fixture, the pool settles permissionlessly on the real TxLINE proof (`provenValue: 2`), and the claim pays out a profit — receipt signature on Explorer.
+- **The Frozen Window, load-tested** — 24 concurrent callers into one round, zero failures, correct tally, settled on the real goal-count delta.
 - **Deployed and playable** at the live URL above, backed by hosted Postgres and a dedicated RPC.
 
 ## Run it yourself

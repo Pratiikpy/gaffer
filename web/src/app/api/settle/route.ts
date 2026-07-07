@@ -4,7 +4,7 @@ import { Connection, PublicKey, ComputeBudgetProgram } from "@solana/web3.js";
 import idl from "@/lib/latch.idl.json";
 import { KeypairWallet } from "@/lib/wallet";
 import { RPC, TXORACLE } from "@/lib/config";
-import { loadServerKeypair, adminOk } from "@/lib/serverConfig";
+import { loadServerKeypair } from "@/lib/serverConfig";
 import { txline } from "@/lib/txline";
 import { prettyErr } from "@/lib/errcopy";
 
@@ -14,11 +14,21 @@ export const dynamic = "force-dynamic";
 const PROGRAM_ID = new PublicKey((idl as any).address);
 const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
 
-/** Keeper crank: discover an anchored proof for a market and settle it. Guarded by adminOk
- * (settle is also permissionless on-chain, but this route spends the server keypair's fees). */
+// Settlement is permissionless on-chain — the kernel re-verifies the TxLINE Merkle proof against the
+// oracle's anchored roots, so a bad crank can't settle a market wrongly. Anyone may crank; this route
+// just fronts the fee with the server keypair. A light per-IP throttle keeps that fee-spend bounded.
+const hits = new Map<string, number[]>();
+function throttled(ip: string): boolean {
+  const now = Date.now(), win = hits.get(ip)?.filter((t) => now - t < 60_000) ?? [];
+  if (win.length >= 8) { hits.set(ip, win); return true; }
+  win.push(now); hits.set(ip, win); return false;
+}
+
+/** Permissionless keeper crank: discover an anchored proof for a market and settle it on-chain. */
 export async function POST(req: NextRequest) {
   try {
-    if (!adminOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+    if (throttled(ip)) return NextResponse.json({ settled: false, reason: "Easy — one collect at a time." }, { status: 429 });
     const { market } = await req.json();
     const conn = new Connection(RPC, "confirmed");
     const kp = loadServerKeypair();

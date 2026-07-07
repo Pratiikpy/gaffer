@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { openFreeze, openBlackout, submitCall, getActiveRound, getLastSettled, getRound } from "@/lib/rounds";
+import { openFreeze, openBlackout, submitCall, getActiveRound, getLastSettled, getRound, maybeAutoFreeze } from "@/lib/rounds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,8 +12,11 @@ export async function GET(req: NextRequest) {
   if (!fixture) return NextResponse.json({ active: null, settled: null });
   // getActiveRound may auto-settle a round it finds past its deadline — in that case it's returned but
   // its state is "settled", so surface it as the reveal, not an active takeover.
-  const active = await getActiveRound(fixture, squad);
+  let active = await getActiveRound(fixture, squad);
   if (active && active.state === "settled") return NextResponse.json({ active: null, settled: active });
+  // Real-time: no round running → check the live feed; a goal that just landed auto-opens a Freeze
+  // (throttled inside). This is what makes the window fire off the real match, not only a button.
+  if (!active) active = await maybeAutoFreeze(fixture, squad);
   const settled = active ? null : await getLastSettled(fixture);
   return NextResponse.json({ active, settled });
 }

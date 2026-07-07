@@ -17,6 +17,14 @@ export class BrowserKernel {
   }
   private vault(m: PublicKey) { return PublicKey.findProgramAddressSync([Buffer.from("vault"), m.toBuffer()], PROGRAM_ID)[0]; }
   private position(m: PublicKey, side: number) { return PublicKey.findProgramAddressSync([Buffer.from("position"), m.toBuffer(), this.wallet.publicKey.toBuffer(), Buffer.from([side])], PROGRAM_ID)[0]; }
+  private config() { return PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0]; }
+  private feeRecipientCache: PublicKey | null = null;
+  /** The house fee recipient, read once from the on-chain Config PDA. claim pins to it (address =
+   * config.fee_recipient), so it must match exactly. Cached — it never changes within a session. */
+  private async feeRecipient(): Promise<PublicKey> {
+    if (!this.feeRecipientCache) { const c: any = await this.program.account.config.fetch(this.config()); this.feeRecipientCache = c.feeRecipient; }
+    return this.feeRecipientCache!;
+  }
 
   async balanceSol(): Promise<number> { return (await this.conn.getBalance(this.wallet.publicKey)) / 1e9; }
 
@@ -28,7 +36,7 @@ export class BrowserKernel {
   async claim(marketStr: string, side: number): Promise<string> {
     const m = new PublicKey(marketStr);
     return await this.program.methods.claim()
-      .accounts({ owner: this.wallet.publicKey, market: m, vault: this.vault(m), position: this.position(m, side), systemProgram: SystemProgram.programId }).rpc();
+      .accounts({ owner: this.wallet.publicKey, market: m, vault: this.vault(m), position: this.position(m, side), config: this.config(), feeRecipient: await this.feeRecipient(), systemProgram: SystemProgram.programId }).rpc();
   }
   async myPosition(marketStr: string, side: number): Promise<{ amount: number; claimed: boolean } | null> {
     try {

@@ -26,6 +26,7 @@ const RPC = process.env.RPC || "https://api.devnet.solana.com";
 const FIXTURE = Number(process.env.FIXTURE || 17588388);
 const PROGRAM_ID = new PublicKey((latchIdl as any).address);
 const GRACE = 120; // VOID_GRACE_SECS in the kernel
+const MAX_RAKE_BPS = 500; // must match the kernel's hard cap
 const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -56,6 +57,7 @@ const posPda = (m: PublicKey, u: PublicKey, side: number) => PublicKey.findProgr
 const parlayPda = (id: BN) => PublicKey.findProgramAddressSync([Buffer.from("parlay"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0];
 const pvaultPda = (p: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("pvault"), p.toBuffer()], PROGRAM_ID)[0];
 const pposPda = (p: PublicKey, u: PublicKey, side: number) => PublicKey.findProgramAddressSync([Buffer.from("pposition"), p.toBuffer(), u.toBuffer(), Buffer.from([side])], PROGRAM_ID)[0];
+const configPda = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0]; // singleton rake config
 const dsrPda = (seedTsMs: number) => PublicKey.findProgramAddressSync([Buffer.from("daily_scores_roots"), new BN(Math.floor(seedTsMs / 86400000)).toArrayLike(Buffer, "le", 2)], TXORACLE)[0];
 
 function settleArgs(bundle: any) {
@@ -153,16 +155,16 @@ async function main() {
     assert(mk.status === 1, "status == SETTLED_YES (1)");
     // pro-rata: pot=130e6, yes_total=90e6 → A=floor(130e6*60e6/90e6)=86,666,666 ; C=43,333,333 ; dust=1
     const vBeforeA = await bal(v);
-    await progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     const paidA = vBeforeA - (await bal(v));
     assert(paidA === 86_666_666, `A pro-rata payout exact (got ${paidA}, want 86,666,666)`);
     const vBeforeC = await bal(v);
-    await progFor(C).methods.claim().accounts({ owner: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    await progFor(C).methods.claim().accounts({ owner: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     const paidC = vBeforeC - (await bal(v));
     assert(paidC === 43_333_333, `C pro-rata payout exact (got ${paidC}, want 43,333,333)`);
     assert((await bal(v)) === rentMin + 1, `vault residual is rent buffer + 1 lamport of dust (got ${await bal(v)})`);
-    await expectErr("B (NO loser) claim", "NotWinner", () => progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
-    await expectErr("A double-claim", "AlreadyClaimed", () => progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc());
+    await expectErr("B (NO loser) claim", "NotWinner", () => progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc());
+    await expectErr("A double-claim", "AlreadyClaimed", () => progA.methods.claim().accounts({ owner: A.publicKey, market: m, vault: v, position: posPda(m, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc());
   }
 
   // ───────────────────────── T2-T7: single-market negatives ─────────────────────────
@@ -223,7 +225,7 @@ async function main() {
     const mk = await progA.account.market.fetch(m);
     assert(mk.status === 2, "empty-YES settle routed to VOID (status 2), not a locked SETTLED_YES");
     const vb = await bal(v);
-    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     assert(vb - (await bal(v)) === 30e6, "B reclaims its full 0.03 stake on void");
   }
 
@@ -241,9 +243,9 @@ async function main() {
     const pk = await progA.account.parlay.fetch(p);
     assert(pk.status === 1, "parlay status == SETTLED_YES (1) after both legs hit");
     const vb = await bal(v);
-    await progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: p, vault: v, position: pposPda(p, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: p, vault: v, position: pposPda(p, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     assert(vb - (await bal(v)) === 100e6, "A (sole YES) takes the whole 0.10 pot");
-    await expectErr("parlay NO loser claim", "NotWinner", () => progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
+    await expectErr("parlay NO loser claim", "NotWinner", () => progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc());
   }
 
   // ───────────────────────── T10-T11: parlay leg negatives ─────────────────────────
@@ -301,10 +303,10 @@ async function main() {
     const mk = await progA.account.market.fetch(tVoid);
     assert(mk.status === 2, "void() after expiry+grace → status VOID (2)");
     const vb = await bal(tVoidVault);
-    await progA.methods.claim().accounts({ owner: A.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc();
+    await progA.methods.claim().accounts({ owner: A.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     assert(vb - (await bal(tVoidVault)) === 0.02e9, "A reclaims its 0.02 stake on void");
     const vb2 = await bal(tVoidVault);
-    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     assert(vb2 - (await bal(tVoidVault)) === 0.02e9, "B reclaims its 0.02 stake on void (both sides refunded)");
   }
   { // T13 parlay bust → NO (partial: leg0 was proven, leg1 never) — also tests void/settle grace race fix
@@ -316,9 +318,44 @@ async function main() {
     const pk = await progA.account.parlay.fetch(tBust);
     assert(pk.status === 3, "resolve_parlay (not all legs hit) → STATUS_PARLAY_NO (3)");
     const vb = await bal(tBustVault);
-    await progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc();
+    await progFor(B).methods.claimParlay().accounts({ owner: B.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
     assert(vb - (await bal(tBustVault)) === 0.05e9, "B (NO) takes the whole 0.05 pot on bust");
-    await expectErr("parlay YES claim after bust", "NotWinner", () => progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, A.publicKey, 1), systemProgram: SystemProgram.programId }).rpc());
+    await expectErr("parlay YES claim after bust", "NotWinner", () => progA.methods.claimParlay().accounts({ owner: A.publicKey, parlay: tBust, vault: tBustVault, position: pposPda(tBust, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc());
+  }
+
+  // ───────────────────────── T17: commercial floor — the capped rake switch ─────────────────────────
+  sec("T17 · Rake (commercial floor): 2.5% skims winnings to the house, refunds untouched, cap + auth enforced");
+  {
+    // Cap + authority guards first (config currently rake 0, authority = A, fee_recipient = A).
+    await expectErr("T17 set_rake above the 5% cap", "BadRake", () => progA.methods.setRake(MAX_RAKE_BPS + 1, null).accounts({ authority: A.publicKey, config: configPda }).rpc());
+    await expectErr("T17 set_rake by a non-authority", "NotConfigAuthority", () => progFor(B).methods.setRake(250, null).accounts({ authority: B.publicKey, config: configPda }).rpc());
+    try {
+      // Turn the rake on at 2.5%. C = sole winner, B = loser, A = passive fee recipient (not a staker
+      // here) so the fee credit to A is observable in isolation.
+      await progA.methods.setRake(250, null).accounts({ authority: A.publicKey, config: configPda }).rpc();
+      assert((await progA.account.config.fetch(configPda)).rakeBps === 250, "rake set to 250 bps (2.5%)");
+
+      const id = new BN(Date.now() + 70); const m = marketPda(id), v = vaultPda(m);
+      await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+        .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+      await progFor(C).methods.joinPool(1, new BN(80e6)).accounts({ user: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), systemProgram: SystemProgram.programId }).rpc(); // C YES 0.08 (sole YES)
+      await progFor(B).methods.joinPool(2, new BN(20e6)).accounts({ user: B.publicKey, market: m, vault: v, position: posPda(m, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc(); // B NO 0.02
+      const a = settleArgs(g);
+      await progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
+        .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+      // gross = pot(0.10) × 0.08/0.08 = 0.10 ; fee = 0.10 × 2.5% = 0.0025 ; net = 0.0975
+      const vBefore = await bal(v), cBefore = await bal(C.publicKey), houseBefore = await bal(A.publicKey);
+      await progFor(C).methods.claim().accounts({ owner: C.publicKey, market: m, vault: v, position: posPda(m, C.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
+      const vDelta = vBefore - (await bal(v)), cGain = (await bal(C.publicKey)) - cBefore, houseGain = (await bal(A.publicKey)) - houseBefore;
+      assert(vDelta === 100_000_000, `vault pays out the full gross 0.10 (net+fee) — got ${vDelta}`);
+      assert(houseGain === 2_500_000, `house takes exactly the 2.5% rake = 0.0025 — got ${houseGain}`);
+      // C paid its own tx fee, so compare net-of-txfee: the credited payout is 0.0975 (allow the 5k lamport sig fee).
+      assert(cGain > 97_000_000 && cGain <= 97_500_000, `winner nets 0.0975 after the rake — got ${cGain}`);
+    } finally {
+      // ALWAYS return the live protocol to 0% — the app ships with no house cut.
+      await progA.methods.setRake(0, null).accounts({ authority: A.publicKey, config: configPda }).rpc();
+      assert((await progA.account.config.fetch(configPda)).rakeBps === 0, "rake reset to 0 — no cut in the shipped app");
+    }
   }
 
   // ── summary ──

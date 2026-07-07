@@ -19,6 +19,12 @@ export class BrowserParlay {
   private vault(p: PublicKey) { return PublicKey.findProgramAddressSync([Buffer.from("pvault"), p.toBuffer()], PROGRAM_ID)[0]; }
   private position(p: PublicKey, side: number) { return PublicKey.findProgramAddressSync([Buffer.from("pposition"), p.toBuffer(), this.wallet.publicKey.toBuffer(), Buffer.from([side])], PROGRAM_ID)[0]; }
   private parlayPda(id: BN) { return PublicKey.findProgramAddressSync([Buffer.from("parlay"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0]; }
+  private config() { return PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID)[0]; }
+  private feeRecipientCache: PublicKey | null = null;
+  private async feeRecipient(): Promise<PublicKey> {
+    if (!this.feeRecipientCache) { const c: any = await this.program.account.config.fetch(this.config()); this.feeRecipientCache = c.feeRecipient; }
+    return this.feeRecipientCache!;
+  }
 
   /** Create a parlay signed + rent-funded by the USER's own wallet (not the server keypair) —
    * so opening a slip is permissionless and can never drain the shared keeper wallet. */
@@ -40,7 +46,7 @@ export class BrowserParlay {
   async claim(parlayStr: string, side: number): Promise<string> {
     const p = new PublicKey(parlayStr);
     return await this.program.methods.claimParlay()
-      .accounts({ owner: this.wallet.publicKey, parlay: p, vault: this.vault(p), position: this.position(p, side), systemProgram: SystemProgram.programId }).rpc();
+      .accounts({ owner: this.wallet.publicKey, parlay: p, vault: this.vault(p), position: this.position(p, side), config: this.config(), feeRecipient: await this.feeRecipient(), systemProgram: SystemProgram.programId }).rpc();
   }
   async myPosition(parlayStr: string, side: number): Promise<{ amount: number; claimed: boolean } | null> {
     try { const pos: any = await this.program.account.position.fetch(this.position(new PublicKey(parlayStr), side)); return { amount: Number(pos.amount) / 1e9, claimed: pos.claimed }; }

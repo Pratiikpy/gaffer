@@ -81,6 +81,28 @@
           "writable": true
         },
         {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -159,6 +181,28 @@
         },
         {
           "name": "position",
+          "writable": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
           "writable": true
         },
         {
@@ -372,6 +416,63 @@
         {
           "name": "expiry_ts",
           "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "init_config",
+      "docs": [
+        "Initialise the singleton protocol Config (rake switch + fee recipient). Idempotent by PDA:",
+        "callable once; the `init` constraint rejects a second call. Ships with `rake_bps = 0`."
+      ],
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "rake_bps",
+          "type": "u16"
         }
       ]
     },
@@ -597,6 +698,63 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "set_rake",
+      "docs": [
+        "Set the protocol rake and/or fee recipient. Authority-gated; hard-capped at `MAX_RAKE_BPS`",
+        "in-program so the ceiling holds regardless of caller intent."
+      ],
+      "discriminator": [
+        239,
+        230,
+        185,
+        62,
+        116,
+        209,
+        44,
+        138
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "rake_bps",
+          "type": "u16"
+        },
+        {
+          "name": "fee_recipient",
+          "type": {
+            "option": "pubkey"
+          }
+        }
+      ]
     },
     {
       "name": "settle",
@@ -887,6 +1045,19 @@
   ],
   "accounts": [
     {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
       "name": "Market",
       "discriminator": [
         219,
@@ -941,6 +1112,19 @@
       ]
     },
     {
+      "name": "FeeTaken",
+      "discriminator": [
+        186,
+        193,
+        162,
+        119,
+        103,
+        247,
+        54,
+        213
+      ]
+    },
+    {
       "name": "MarketSettled",
       "discriminator": [
         237,
@@ -964,6 +1148,19 @@
         75,
         89,
         26
+      ]
+    },
+    {
+      "name": "RakeSet",
+      "discriminator": [
+        125,
+        87,
+        28,
+        109,
+        147,
+        20,
+        174,
+        239
       ]
     }
   ],
@@ -1072,6 +1269,21 @@
       "code": 6020,
       "name": "BadLegs",
       "msg": "Invalid parlay legs"
+    },
+    {
+      "code": 6021,
+      "name": "BadRake",
+      "msg": "Rake exceeds the hard cap"
+    },
+    {
+      "code": 6022,
+      "name": "BadFeeRecipient",
+      "msg": "Fee recipient does not match config"
+    },
+    {
+      "code": 6023,
+      "name": "NotConfigAuthority",
+      "msg": "Caller is not the config authority"
     }
   ],
   "types": [
@@ -1105,6 +1317,54 @@
           {
             "name": "amount",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "docs": [
+        "Singleton protocol config — the commercial-floor switch. One PDA (seeds = [b\"config\"]) for the",
+        "whole program; read by every claim to know today's rake (0) and where the house fee goes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "rake_bps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeTaken",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "rake_bps",
+            "type": "u16"
           }
         ]
       }
@@ -1387,6 +1647,22 @@
           {
             "name": "is_right_sibling",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RakeSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "rake_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
           }
         ]
       }

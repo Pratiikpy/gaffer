@@ -20,11 +20,20 @@ export const GRANT = {
   squad_join: 100,
   share: 50,
   frozen_win: 40, // read a Frozen Window (Freeze/Blackout) round right
+  hilo_win: 5,    // one correct Hi-Lo call (rapid-fire, so small but stackable)
 } as const;
 export type GrantKind = keyof typeof GRANT;
 
 /** Grant Frozen Window round points — idempotent per (user, round). */
-export async function grantFrozenWin(userId: string, roundId: string) { return insertGrant(userId, "frozen_win", `frozen:${roundId}`); }
+export async function grantFrozenWin(userId: string, roundId: string) {
+  const granted = await insertGrant(userId, "frozen_win", `frozen:${roundId}`);
+  // Only ping on a NET-NEW grant (idempotent key already claimed → no duplicate buzz).
+  if (granted) { const { pushUser } = await import("./push"); await pushUser(userId, { title: "🟢 You read it right", body: "The window went your way — +40 points banked.", url: "/", tag: "frozenwin" }).catch(() => {}); }
+  return granted;
+}
+
+/** Grant a correct Hi-Lo call — idempotent per (user, question id), so replaying a POST can't farm. */
+export async function grantHiloWin(userId: string, qid: string) { return insertGrant(userId, "hilo_win", `hilo:${qid}`); }
 
 /** First 8 bytes of each LATCH instruction (from the IDL) — grants verify the actual instruction,
  * not merely "a transaction that touched the program", so a join sig can never mint a win grant. */

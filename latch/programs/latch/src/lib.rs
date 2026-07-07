@@ -54,6 +54,28 @@ pub const COMPARISON_GREATER_THAN: u8 = 0;
 /// the proof seed `ts` is in MILLISECONDS, so settle compares `ts / 1000 <= expiry_ts`.
 pub const VOID_GRACE_SECS: i64 = 120;
 
+/// Commercial floor (the revenue switch, provably bounded). The protocol may take a parimutuel rake
+/// from WINNINGS only (never a void refund), read from the singleton `Config` PDA at claim time. It is
+/// hard-capped in-program at `MAX_RAKE_BPS` — the kernel will never take more than this no matter what
+/// the authority sets — and ships at 0 (no house cut today). Flipping the switch turns on revenue with
+/// zero redeploy; the cap makes the ceiling verifiable on-chain, not a promise in a doc.
+pub const MAX_RAKE_BPS: u16 = 500; // 5.00% hard ceiling
+pub const BPS_DENOM: u128 = 10_000;
+
+/// Split a gross payout into (net_to_winner, house_fee) using the current rake. Rake applies to
+/// WINNINGS only — `is_win` is false for a void refund, which is always returned in full, un-raked.
+/// Pure rake split (unit-tested). Rake applies to WINNINGS only — a void refund (`is_win == false`) is
+/// always returned in full, un-raked. Checked math; the fee can never exceed the gross.
+fn rake_split(bps: u16, gross: u64, is_win: bool) -> Result<(u64, u64)> {
+    if !is_win || bps == 0 { return Ok((gross, 0)); }
+    let fee = ((gross as u128).checked_mul(bps as u128).ok_or(KernelError::Overflow)? / BPS_DENOM) as u64;
+    Ok((gross - fee, fee))
+}
+
+fn apply_rake(config: &Account<Config>, gross: u64, is_win: bool) -> Result<(u64, u64)> {
+    rake_split(config.rake_bps, gross, is_win)
+}
+
 // ───────── txoracle::validate_stat arg layout (exact Borsh, from the on-chain IDL) ─────────
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ScoresUpdateStats { pub update_count: i32, pub min_timestamp: i64, pub max_timestamp: i64 }
@@ -140,6 +162,30 @@ fn fund_vault_rent<'a>(authority: &Signer<'a>, vault: &UncheckedAccount<'a>, sys
 #[program]
 pub mod latch {
     use super::*;
+
+    /// Initialise the singleton protocol Config (rake switch + fee recipient). Idempotent by PDA:
+    /// callable once; the `init` constraint rejects a second call. Ships with `rake_bps = 0`.
+    pub fn init_config(ctx: Context<InitConfig>, fee_recipient: Pubkey, rake_bps: u16) -> Result<()> {
+        require!(rake_bps <= MAX_RAKE_BPS, KernelError::BadRake);
+        let c = &mut ctx.accounts.config;
+        c.authority = ctx.accounts.authority.key();
+        c.fee_recipient = fee_recipient;
+        c.rake_bps = rake_bps;
+        c.bump = ctx.bumps.config;
+        emit!(RakeSet { rake_bps, fee_recipient });
+        Ok(())
+    }
+
+    /// Set the protocol rake and/or fee recipient. Authority-gated; hard-capped at `MAX_RAKE_BPS`
+    /// in-program so the ceiling holds regardless of caller intent.
+    pub fn set_rake(ctx: Context<SetRake>, rake_bps: u16, fee_recipient: Option<Pubkey>) -> Result<()> {
+        require!(rake_bps <= MAX_RAKE_BPS, KernelError::BadRake);
+        let c = &mut ctx.accounts.config;
+        c.rake_bps = rake_bps;
+        if let Some(fr) = fee_recipient { c.fee_recipient = fr; }
+        emit!(RakeSet { rake_bps, fee_recipient: c.fee_recipient });
+        Ok(())
+    }
 
     /// Open a parimutuel market on one monotone over-threshold soccer stat predicate.
     pub fn create_market(
@@ -307,7 +353,7 @@ pub mod latch {
 
     /// Claim winnings (settled-YES: pro-rata share of the whole pot) or a refund (voided: own stake).
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
-        let payout: u64 = {
+        let (gross, is_win): (u64, bool) = {
             let m = &ctx.accounts.market;
             let pos = &ctx.accounts.position;
             require!(!pos.claimed, KernelError::AlreadyClaimed);
@@ -316,12 +362,14 @@ pub mod latch {
                     require!(pos.side == SIDE_YES, KernelError::NotWinner);
                     require!(m.yes_total > 0, KernelError::Overflow);
                     let pot = (m.yes_total as u128).checked_add(m.no_total as u128).ok_or(KernelError::Overflow)?;
-                    (pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (m.yes_total as u128)) as u64
+                    ((pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (m.yes_total as u128)) as u64, true)
                 }
-                STATUS_VOID => pos.amount, // refund original stake (either side)
+                STATUS_VOID => (pos.amount, false), // refund original stake (either side) — never raked
                 _ => return err!(KernelError::NotResolved),
             }
         };
+        // Commercial floor: skim the capped rake from winnings only (0 today). Refunds pass through whole.
+        let (payout, fee) = apply_rake(&ctx.accounts.config, gross, is_win)?;
 
         // move lamports out of the vault PDA (the program signs for its own PDA)
         let market_key = ctx.accounts.market.key();
@@ -336,6 +384,14 @@ pub mod latch {
             ],
             &[seeds],
         )?;
+        if fee > 0 {
+            invoke_signed(
+                &system_instruction::transfer(&ctx.accounts.vault.key(), &ctx.accounts.fee_recipient.key(), fee),
+                &[ctx.accounts.vault.to_account_info(), ctx.accounts.fee_recipient.to_account_info(), ctx.accounts.system_program.to_account_info()],
+                &[seeds],
+            )?;
+            emit!(FeeTaken { market: market_key, amount: fee, rake_bps: ctx.accounts.config.rake_bps });
+        }
 
         ctx.accounts.position.claimed = true;
         emit!(Claimed { market: market_key, owner: ctx.accounts.owner.key(), amount: payout });
@@ -461,7 +517,7 @@ pub mod latch {
 
     /// Claim a parlay payout (winning side splits the pot pro-rata) or a void refund.
     pub fn claim_parlay(ctx: Context<ClaimParlay>) -> Result<()> {
-        let payout: u64 = {
+        let (gross, is_win): (u64, bool) = {
             let p = &ctx.accounts.parlay;
             let pos = &ctx.accounts.position;
             require!(!pos.claimed, KernelError::AlreadyClaimed);
@@ -470,17 +526,18 @@ pub mod latch {
                 STATUS_SETTLED_YES => {
                     require!(pos.side == SIDE_YES, KernelError::NotWinner);
                     require!(p.yes_total > 0, KernelError::Overflow);
-                    (pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (p.yes_total as u128)) as u64
+                    ((pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (p.yes_total as u128)) as u64, true)
                 }
                 STATUS_PARLAY_NO => {
                     require!(pos.side == SIDE_NO, KernelError::NotWinner);
                     require!(p.no_total > 0, KernelError::Overflow);
-                    (pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (p.no_total as u128)) as u64
+                    ((pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (p.no_total as u128)) as u64, true)
                 }
-                STATUS_VOID => pos.amount,
+                STATUS_VOID => (pos.amount, false),
                 _ => return err!(KernelError::NotResolved),
             }
         };
+        let (payout, fee) = apply_rake(&ctx.accounts.config, gross, is_win)?;
         let pk = ctx.accounts.parlay.key();
         let vb = ctx.accounts.parlay.vault_bump;
         let seeds: &[&[u8]] = &[b"pvault", pk.as_ref(), &[vb]];
@@ -489,6 +546,14 @@ pub mod latch {
             &[ctx.accounts.vault.to_account_info(), ctx.accounts.owner.to_account_info(), ctx.accounts.system_program.to_account_info()],
             &[seeds],
         )?;
+        if fee > 0 {
+            invoke_signed(
+                &system_instruction::transfer(&ctx.accounts.vault.key(), &ctx.accounts.fee_recipient.key(), fee),
+                &[ctx.accounts.vault.to_account_info(), ctx.accounts.fee_recipient.to_account_info(), ctx.accounts.system_program.to_account_info()],
+                &[seeds],
+            )?;
+            emit!(FeeTaken { market: pk, amount: fee, rake_bps: ctx.accounts.config.rake_bps });
+        }
         ctx.accounts.position.claimed = true;
         emit!(Claimed { market: pk, owner: ctx.accounts.owner.key(), amount: payout });
         Ok(())
@@ -564,6 +629,11 @@ pub struct Claim<'info> {
         constraint = position.market == market.key() @ KernelError::StatMismatch
     )]
     pub position: Account<'info, Position>,
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    /// CHECK: house fee recipient, pinned to config.fee_recipient; only ever receives the rake slice.
+    #[account(mut, address = config.fee_recipient @ KernelError::BadFeeRecipient)]
+    pub fee_recipient: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -631,7 +701,28 @@ pub struct ClaimParlay<'info> {
         constraint = position.market == parlay.key() @ KernelError::StatMismatch
     )]
     pub position: Account<'info, Position>,
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    /// CHECK: house fee recipient, pinned to config.fee_recipient; only ever receives the rake slice.
+    #[account(mut, address = config.fee_recipient @ KernelError::BadFeeRecipient)]
+    pub fee_recipient: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitConfig<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(init, payer = authority, space = 8 + Config::INIT_SPACE, seeds = [b"config"], bump)]
+    pub config: Account<'info, Config>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetRake<'info> {
+    pub authority: Signer<'info>,
+    #[account(mut, seeds = [b"config"], bump = config.bump, has_one = authority @ KernelError::NotConfigAuthority)]
+    pub config: Account<'info, Config>,
 }
 
 // ───────────────────────── state ─────────────────────────
@@ -653,6 +744,17 @@ pub struct Market {
     pub settle_ts: i64,
     pub bump: u8,
     pub vault_bump: u8,
+}
+
+/// Singleton protocol config — the commercial-floor switch. One PDA (seeds = [b"config"]) for the
+/// whole program; read by every claim to know today's rake (0) and where the house fee goes.
+#[account]
+#[derive(InitSpace)]
+pub struct Config {
+    pub authority: Pubkey,     // may change the rake / recipient
+    pub fee_recipient: Pubkey, // where the rake accrues (the house treasury)
+    pub rake_bps: u16,         // current protocol rake, ≤ MAX_RAKE_BPS (0 today)
+    pub bump: u8,
 }
 
 #[account]
@@ -701,6 +803,10 @@ pub struct MarketSettled { pub market: Pubkey, pub market_id: u64, pub winning_s
 pub struct MarketVoided { pub market: Pubkey, pub market_id: u64 }
 #[event]
 pub struct Claimed { pub market: Pubkey, pub owner: Pubkey, pub amount: u64 }
+#[event]
+pub struct FeeTaken { pub market: Pubkey, pub amount: u64, pub rake_bps: u16 }
+#[event]
+pub struct RakeSet { pub rake_bps: u16, pub fee_recipient: Pubkey }
 
 // ───────────────────────── errors ─────────────────────────
 #[error_code]
@@ -726,4 +832,40 @@ pub enum KernelError {
     #[msg("Caller is not on the winning side")] NotWinner,
     #[msg("Market not resolved")] NotResolved,
     #[msg("Invalid parlay legs")] BadLegs,
+    #[msg("Rake exceeds the hard cap")] BadRake,
+    #[msg("Fee recipient does not match config")] BadFeeRecipient,
+    #[msg("Caller is not the config authority")] NotConfigAuthority,
+}
+
+// ── Unit tests (host target — `cargo test -p latch --lib`, no validator/RPC needed). Covers the pure,
+// deterministic settlement helpers; the CPI + end-to-end paths are exercised by ../../src/*e2e.ts on devnet.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comparison_from_u8_maps_the_three_valid_codes() {
+        assert!(matches!(comparison_from_u8(0).unwrap(), Comparison::GreaterThan));
+        assert!(matches!(comparison_from_u8(1).unwrap(), Comparison::LessThan));
+        assert!(matches!(comparison_from_u8(2).unwrap(), Comparison::EqualTo));
+    }
+
+    #[test]
+    fn comparison_from_u8_rejects_out_of_range() {
+        assert!(comparison_from_u8(3).is_err());
+        assert!(comparison_from_u8(255).is_err());
+    }
+
+    #[test]
+    fn rake_applies_to_winnings_only_and_is_capped() {
+        // 5% (the MAX_RAKE_BPS ceiling) on 1000 → 50 fee, 950 to the winner.
+        assert_eq!(rake_split(500, 1000, true).unwrap(), (950, 50));
+        // A void refund is never raked — the fan gets the whole stake back.
+        assert_eq!(rake_split(500, 1000, false).unwrap(), (1000, 0));
+        // Zero rake → whole pot to the winner.
+        assert_eq!(rake_split(0, 1000, true).unwrap(), (1000, 0));
+        // The fee never exceeds the gross, even at the hard ceiling on a large pot.
+        let (net, fee) = rake_split(MAX_RAKE_BPS, u64::MAX / 2, true).unwrap();
+        assert!(fee <= u64::MAX / 2 && net + fee == u64::MAX / 2);
+    }
 }

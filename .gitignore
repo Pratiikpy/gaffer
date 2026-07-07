@@ -47,3 +47,6 @@ OTHER-AGENT-REVIEW.md
 onchain-idl.json
 types/
 src/probe-*.ts
+
+# Transient keeper/agent run logs (local evidence, not committed)
+logs/

@@ -115,13 +115,48 @@ export async function gradePicks(fixtureId: number, yesWon: boolean): Promise<nu
   for (const p of rows as any[]) {
     const correct = (p.side === "yes") === yesWon;
     await db()`UPDATE picks SET graded = TRUE, correct = ${correct} WHERE user_id = ${p.user_id} AND day = ${p.day}`;
-    if (correct) await insertGrant(p.user_id, "pick_win", `pickwin:${fixtureId}:${p.day}`);
+    if (correct) {
+      const fresh = await insertGrant(p.user_id, "pick_win", `pickwin:${fixtureId}:${p.day}`);
+      // T7 — Double Down (the Mystery booster): a correct call pays twice, once, if it was armed.
+      // Consumed here so the bonus can never be double-spent across two fixtures.
+      if (fresh) {
+        const { consumeMystery } = await import("./economy");
+        if (await consumeMystery(p.user_id)) {
+          await db()`INSERT INTO points_events (user_id, kind, amount, ref, ts)
+            VALUES (${p.user_id}, 'mystery_bonus', ${GRANT.pick_win}, ${`mystery:${fixtureId}:${p.day}`}, ${Date.now()})
+            ON CONFLICT (user_id, kind, ref) DO NOTHING`;
+        }
+      }
+    }
     graded++;
   }
   return graded;
 }
 /** Streak-advance bonus — one per user per day, only awarded alongside a recorded activity day. */
 export async function grantStreakBonus(userId: string) { await insertGrant(userId, "streak_bonus", `streak:${dayRef()}`); }
+
+/** L8 "twist" — flip today's free call to the other side. Only while it is still ungraded, so a result
+ * can never be called after it is known. The stake never changes: this is agency, not escalation. */
+export async function switchTodayPick(userId: string, side: "yes" | "no"): Promise<{ ok: boolean; reason?: string }> {
+  const rows = await db()`UPDATE picks SET side = ${side}
+    WHERE user_id = ${userId} AND day = ${utcDay()} AND graded = FALSE AND side <> ${side}
+    RETURNING fixture_id`;
+  if (!rows.length) {
+    const has = await db()`SELECT graded, side FROM picks WHERE user_id = ${userId} AND day = ${utcDay()}`;
+    const p = (has as any[])[0];
+    if (!p) return { ok: false, reason: "You haven't made today's call yet." };
+    if (p.graded) return { ok: false, reason: "That call has already been settled." };
+    return { ok: false, reason: "You're already on that side." };
+  }
+  return { ok: true };
+}
+
+/** Today's free call, for the halftime beat (so the UI can offer the other side by name). */
+export async function todayPick(userId: string): Promise<{ fixtureId: number; side: string; quest: string; graded: boolean } | null> {
+  const r = await db()`SELECT fixture_id, side, quest, graded FROM picks WHERE user_id = ${userId} AND day = ${utcDay()}`;
+  const p = (r as any[])[0];
+  return p ? { fixtureId: Number(p.fixture_id), side: p.side, quest: p.quest, graded: !!p.graded } : null;
+}
 
 /** Verify a transaction (a) succeeded, (b) was fee-paid/signed by `expectedSigner`, and (c) contains
  * a LATCH instruction whose discriminator is one of `allowedIx`. This is the anti-forge core: a win

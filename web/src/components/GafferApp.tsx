@@ -5,7 +5,7 @@ import { BrowserParlay } from "@/lib/parlayClient";
 import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
-import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy } from "@/lib/api";
+import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
@@ -279,7 +279,7 @@ export default function GafferApp() {
   // T3 — the wager and the one-time Earn-Back repair. Both are point SPENDS, so both go through the
   // token-guarded economy route; the client never adjusts a total itself.
   const [econBusy, setEconBusy] = useState(false);
-  const econAct = useCallback(async (action: "open_wager" | "earn_back", okMsg: string) => {
+  const econAct = useCallback(async (action: "open_wager" | "earn_back" | "enter_knockouts" | "use_mystery", okMsg: string) => {
     if (!userId || econBusy) return;
     setEconBusy(true);
     try {
@@ -290,6 +290,8 @@ export default function GafferApp() {
   }, [userId, econBusy, refreshEcon, refreshPoints]);
   const onWager = useCallback(() => econAct("open_wager", "Wager placed — keep the run alive."), [econAct]);
   const onEarnBack = useCallback(() => econAct("earn_back", "Run repaired. Pick up where you left off."), [econAct]);
+  const onEnterKnockouts = useCallback(() => econAct("enter_knockouts", "You're in. Everyone starts level."), [econAct]);
+  const onPlayMystery = useCallback(() => econAct("use_mystery", "Double Down armed — your next correct call pays twice."), [econAct]);
   // The per-user token guards every points grant (so no one can mint points for another id).
   const pTok = () => (typeof window !== "undefined" ? localStorage.getItem("gaffer_ptoken") || "" : "");
 
@@ -548,9 +550,9 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} />}
-        {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} />}
+        {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
         {tab === "you" && <You streak={streak} bal={bal} points={points} nation={nation} userName={userName} userId={userId} flash={flash} cfg={cfg} muted={MONEY_MUTED} toggleMute={toggleMute} spoiler={SPOILER_SAFE} toggleSpoiler={toggleSpoiler} econ={econ} onWager={onWager} onEarnBack={onEarnBack} econBusy={econBusy} />}
       </main>
@@ -1028,6 +1030,106 @@ function RolloverPot({ econ }: { econ: Economy | null }) {
   );
 }
 
+/** T7 — the Mystery booster. Visible from day one as a sealed slot; what's inside is genuinely unknown
+ * (the server won't say) until the knockouts. It is not a badge: once played it arms Double Down, and
+ * the next correct call really does pay twice, on the ledger. */
+function MysterySlot({ econ, onPlay, busy }: { econ: Economy | null; onPlay: () => void; busy?: boolean }) {
+  const m = econ?.boosters?.mystery;
+  if (!m) return null;
+  const dateLabel = new Date(m.revealsOn + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+  if (!m.revealed) {
+    return (
+      <div className="mt-4 rounded-2xl p-4 border-2 border-dashed border-[var(--line)] bg-white flex items-center gap-3.5">
+        <div className="w-11 h-11 rounded-xl bg-[#FAFAF7] border border-[var(--line)] flex items-center justify-center shrink-0">
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden><path d="M10 3v14M3 10h14" stroke="#C9CBC7" strokeWidth="2.4" strokeLinecap="round" /></svg>
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-bold">A booster is sealed in here.</div>
+          <div className="text-[12px] text-[var(--muted)]">Nobody finds out what it does until the knockouts — {dateLabel}.</div>
+        </div>
+      </div>
+    );
+  }
+  if (m.spent) {
+    return (
+      <div className="mt-4 rounded-2xl p-4 bg-white border border-[var(--line)]">
+        <div className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">{m.name}</div>
+        <div className="text-sm font-bold mt-0.5">Played. It doubled your call.</div>
+      </div>
+    );
+  }
+  if (m.armed) {
+    return (
+      <div className="mt-4 rounded-2xl p-4 bg-[var(--green)]/10 border border-[var(--green)]/30">
+        <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">{m.name} · armed</div>
+        <div className="text-sm font-bold mt-0.5">Your next correct call pays double.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 rounded-2xl p-4 bg-[var(--dark)] text-white">
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Booster unsealed</div>
+      <div className="text-lg font-black mt-0.5">{m.name}</div>
+      <p className="text-[12px] opacity-75 mt-0.5">{m.blurb}</p>
+      <button onClick={onPlay} disabled={busy} className="mt-3 w-full py-2.5 rounded-xl bg-white text-[var(--ink)] font-bold text-sm disabled:opacity-40">Play it</button>
+      <p className="text-[11px] opacity-60 mt-1.5">One only. Once it&apos;s gone, it&apos;s gone.</p>
+    </div>
+  );
+}
+
+/** T6 — the late-join promise, stated plainly, and the knockout-only entry as a real, first-class flow.
+ * The single most-begged-for thing in every World Cup pool thread: "can I still join?" The answer has to
+ * be yes, and it has to be a button — not a paragraph. */
+function KnockoutEntry({ econ, onEnter, busy, name }: { econ: Economy | null; onEnter: () => void; busy?: boolean; name: string }) {
+  const k = econ?.knockouts;
+  if (!k) return null;
+  const startLabel = new Date(k.startsOn + "T00:00:00Z").toLocaleDateString(undefined, { month: "long", day: "numeric" });
+
+  if (k.entered && k.open && k.size > 0) {
+    return (
+      <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Knockout board</span>
+          <span className="mono text-[10px] font-bold text-[var(--green)]">#{k.rank} of {k.size}</span>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          {k.rows.slice(0, 5).map((r) => (
+            <div key={r.userId} className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 ${r.you ? "bg-[#F1F7F3]" : ""}`}>
+              <span className="mono text-[11px] w-5 text-[var(--muted)] tabular-nums">{r.rank}</span>
+              {r.rank <= 3 ? <Medal tier={r.rank === 1 ? "gold" : r.rank === 2 ? "silver" : "bronze"} size={15} /> : <span className="w-[15px]" />}
+              <span className={`text-sm flex-1 truncate ${r.you ? "font-black" : "font-medium"}`}>{r.you ? `${name || "You"} (you)` : `Caller ${r.userId.slice(0, 4)}`}</span>
+              <span className="mono text-[12px] font-bold tabular-nums">{r.points}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (k.entered) {
+    return (
+      <div className="mt-4 rounded-2xl p-4 bg-[var(--green)]/10 border border-[var(--green)]/30">
+        <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">You&apos;re in</div>
+        <div className="text-sm font-bold mt-0.5">The knockout board opens {startLabel}.</div>
+        <p className="text-[12px] text-[var(--muted)] mt-0.5">Everyone starts level. Nothing before it counts.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 rounded-2xl p-4 bg-[var(--dark)] text-white relative overflow-hidden">
+      <div className="absolute -right-10 -bottom-12 w-36 h-36 rounded-full bg-[var(--green)] opacity-[0.14] blur-2xl" />
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Joined late?</div>
+      <div className="text-lg font-black mt-0.5 leading-tight">You haven&apos;t missed it.</div>
+      <p className="text-[12px] opacity-75 mt-1 leading-snug">
+        The knockout board starts everyone level on {startLabel}. Turn up then and you can still win the whole thing.
+      </p>
+      <button onClick={onEnter} disabled={busy} className="mt-3 w-full py-2.5 rounded-xl bg-white text-[var(--ink)] font-bold text-sm disabled:opacity-40">
+        Enter the knockout board
+      </button>
+    </div>
+  );
+}
+
 /** Y3 — status tier. Read from LIFETIME EARNED, so spending points can never demote you (the fix for
  * the hoarding failure every points economy hits). The bar shows the climb to the next rank. */
 function TierCard({ econ }: { econ: Economy | null }) {
@@ -1147,7 +1249,7 @@ function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () =
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ }: any) {
+function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -1185,6 +1287,8 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
 
       <QuestBoard econ={econ} />
       <RolloverPot econ={econ} />
+      <KnockoutEntry econ={econ} onEnter={onEnterKnockouts} busy={econBusy} name={userName} />
+      <MysterySlot econ={econ} onPlay={onPlayMystery} busy={econBusy} />
       {selectedFixture && <MarketRead fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
       {selectedFixture && <DramaMeter fixtureId={selectedFixture} />}
       {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} /> : null; })()}
@@ -1847,9 +1951,93 @@ function GafferTake({ moment, home, away }: { moment: { kind: string; who: strin
   );
 }
 
-function Live({ fixtureId, onFreeze, onBlackout }: { fixtureId: number; onFreeze: () => void; onBlackout: () => void }) {
+/** L7/L8 — the halftime beat. Halftime is ~6x the per-minute engagement of open play, so the break gets
+ * one real decision: stick with your call, or twist it to the other side. Exactly one move per matchday,
+ * at a fixed stake — the anti-predatory version of in-play agency. */
+function HalftimeBeat({ pulse, onTwist, busy }: { pulse: LivePulse | null; onTwist: (side: "yes" | "no") => void; busy?: boolean }) {
+  if (!pulse?.atHalftime) return null;
+  const pick = pulse.pick;
+  const other = pick?.side === "yes" ? "no" : "yes";
+  return (
+    <div className="mt-4 rounded-2xl p-4 bg-[var(--dark)] text-white relative overflow-hidden">
+      <div className="absolute -left-10 -top-12 w-36 h-36 rounded-full bg-[var(--green)] opacity-[0.16] blur-2xl" />
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Halftime</div>
+      <div className="text-lg font-black mt-0.5">45 minutes left.</div>
+      {pick ? (
+        <>
+          <p className="text-[12px] opacity-75 mt-1 leading-snug">
+            You called <b className="opacity-100">{pick.side.toUpperCase()}</b> on “{pick.quest}”. Stick with it, or twist — one move a day, and your stake never changes.
+          </p>
+          {pulse.canTwist ? (
+            <div className="mt-3 flex gap-2">
+              <button disabled={busy} onClick={() => onTwist(other as "yes" | "no")} className="flex-1 py-2.5 rounded-xl bg-white text-[var(--ink)] font-bold text-sm disabled:opacity-40">
+                Twist to {other.toUpperCase()}
+              </button>
+              <div className="flex-1 py-2.5 rounded-xl border border-white/25 text-center font-bold text-sm opacity-70">Stick</div>
+            </div>
+          ) : (
+            <p className="mt-2 mono text-[10px] uppercase tracking-widest opacity-60">Your move is spent for today.</p>
+          )}
+        </>
+      ) : (
+        <p className="text-[12px] opacity-75 mt-1">No call on this match today — nothing to move.</p>
+      )}
+    </div>
+  );
+}
+
+/** L2 — the market has stopped quoting. Shown as a state, never as a claim about what happened. */
+function MarketQuiet({ pulse }: { pulse: LivePulse | null }) {
+  if (!pulse?.marketQuiet || pulse.finished) return null;
+  return (
+    <div className="mt-3 rounded-2xl p-3.5 bg-white border border-[var(--line)] flex items-center gap-3">
+      <span className="w-2 h-2 rounded-full bg-[#D8A32B] animate-pulse shrink-0" />
+      <div className="text-[12px] leading-snug"><b>The market has gone quiet.</b> <span className="text-[var(--muted)]">Nobody&apos;s quoting. Something is happening.</span></div>
+    </div>
+  );
+}
+
+/** L5 — your live calls on this match, tracked from projected → cooking → paid off the real clock. */
+function LiveCallTracker({ positions, markets, fixtureId, pulse }: { positions: any[]; markets: MarketView[]; fixtureId: number; pulse: LivePulse | null }) {
+  const mine = positions
+    .filter((p) => p.amount > 0 && !p.claimed)
+    .map((p) => ({ p, m: markets.find((x) => x.pubkey === p.market) }))
+    .filter((x) => x.m && Number(x.m!.fixtureId) === fixtureId && realMarket(x.m!));
+  if (!mine.length) return null;
+
+  const stage = (m: MarketView) => {
+    if (m.status === 1) return { label: "PAID", tone: "bg-[var(--green)] text-white" };
+    if (m.status === 2) return { label: "REFUNDED", tone: "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]" };
+    if (pulse?.running || pulse?.atHalftime) return { label: "COOKING", tone: "bg-[#D8A32B] text-white" };
+    return { label: "PROJECTED", tone: "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]" };
+  };
+
+  return (
+    <div className="mt-4">
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--muted)] mb-2">Your calls, live</div>
+      <div className="space-y-2">
+        {mine.map(({ p, m }) => {
+          const s = stage(m!);
+          return (
+            <div key={m!.pubkey + ":" + p.side} className="bg-white border border-[var(--line)] rounded-2xl p-3.5 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold truncate">{label(m!).q}?</div>
+                <div className="mono text-[10px] text-[var(--muted)]">{fmtAmt(p.amount)} on {p.side === 1 ? "YES" : "NO"}</div>
+              </div>
+              <span className={`mono text-[9px] font-extrabold tracking-widest rounded px-2 py-1 shrink-0 ${s.tone}`}>{s.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, positions = [], markets = [], flash }: any) {
   const [scores, setScores] = useState<any>(null);
   const [err, setErr] = useState(false);
+  const [pulse, setPulse] = useState<LivePulse | null>(null);
+  const [twistBusy, setTwistBusy] = useState(false);
   const f = fx(fixtureId);
   useEffect(() => {
     let on = true;
@@ -1858,6 +2046,26 @@ function Live({ fixtureId, onFreeze, onBlackout }: { fixtureId: number; onFreeze
     const t = setInterval(tick, 8000);
     return () => { on = false; clearInterval(t); };
   }, [fixtureId]);
+
+  // The live pulse drives the halftime beat, the market-quiet strip and the call tracker.
+  useEffect(() => {
+    let on = true;
+    const tick = () => livePulse(fixtureId, userId || undefined, squadCode).then((p) => on && setPulse(p)).catch(() => {});
+    tick(); if (!POLL) return () => { on = false; };
+    const t = setInterval(tick, 8000);
+    return () => { on = false; clearInterval(t); };
+  }, [fixtureId, userId, squadCode]);
+
+  const doTwist = async (side: "yes" | "no") => {
+    if (twistBusy) return;
+    setTwistBusy(true);
+    try {
+      const tok = typeof window !== "undefined" ? localStorage.getItem("gaffer_ptoken") || "" : "";
+      const r = await twistCall({ userId, token: tok, fixtureId, side, squadCode: squadCode || null, name: userName });
+      if (r?.ok) { flash?.(`Twisted — you're on ${side.toUpperCase()} now.`, "ok"); setPulse(await livePulse(fixtureId, userId || undefined, squadCode)); }
+      else flash?.(r?.reason || "Couldn't move that call.", "err");
+    } finally { setTwistBusy(false); }
+  };
 
   const recent: any[] = scores?.recent || [];
   const latest = recent[recent.length - 1];
@@ -1882,7 +2090,10 @@ function Live({ fixtureId, onFreeze, onBlackout }: { fixtureId: number; onFreeze
   return (
     <div>
       <Section title={`Match Centre · ${f.home} v ${f.away}`} />
-      <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
+      <HalftimeBeat pulse={pulse} onTwist={doTwist} busy={twistBusy} />
+      <MarketQuiet pulse={pulse} />
+      <LiveCallTracker positions={positions} markets={markets} fixtureId={fixtureId} pulse={pulse} />
+      <div className="mt-4 bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
         {/* per-match identity: both kits as a floodlit color wash behind the scoreline */}
         <div className="absolute inset-x-0 top-0 h-1.5" style={{ background: `linear-gradient(90deg, ${team(f.home).primary} 0%, ${team(f.home).primary} 42%, ${team(f.away).primary} 58%, ${team(f.away).primary} 100%)` }} />
         <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full opacity-[0.16]" style={{ background: `radial-gradient(circle, ${team(f.home).primary}, transparent 70%)` }} />

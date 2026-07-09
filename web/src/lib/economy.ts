@@ -256,18 +256,83 @@ export async function rolloverPot(): Promise<{ lamports: number; sol: number; so
 
 /* ─────────────────────────── T7 / L8 · Boosters and the one mid-match move ──────────────────────── */
 
-/** The Mystery booster is visible from day one and only REVEALS at the knockout stage. */
+/** The Mystery booster is visible from day one and only REVEALS at the knockout stage. What it turns out
+ * to be — Double Down: your next correct call pays twice. It is armed when played and consumed by the
+ * next graded win, so it is a real effect on the ledger, not a badge. */
 export const MYSTERY_REVEAL_ISO = "2026-07-11";
+export const KNOCKOUT_START_ISO = "2026-07-11";
 export const mysteryRevealed = (now = Date.now()) => now >= Date.parse(MYSTERY_REVEAL_ISO + "T00:00:00Z");
+export const knockoutStartMs = Date.parse(KNOCKOUT_START_ISO + "T00:00:00Z");
+export const MYSTERY_NAME = "Double Down";
+export const MYSTERY_BLURB = "Your next correct call pays double.";
 
 export async function boosterState(userId: string) {
   const day = utcDay();
   await db()`INSERT INTO boosters (user_id, kind, granted_day, ts) VALUES (${userId}, 'mystery', 0, ${Date.now()}) ON CONFLICT DO NOTHING`;
-  const m = await db()`SELECT used_day FROM boosters WHERE user_id = ${userId} AND kind = 'mystery'`;
+  const m = await db()`SELECT used_day, used_ref FROM boosters WHERE user_id = ${userId} AND kind = 'mystery'`;
   const t = await db()`SELECT used_day, used_ref FROM boosters WHERE user_id = ${userId} AND kind = 'stick_or_twist' AND granted_day = ${day}`;
+  const mm = (m as any[])[0];
   return {
-    mystery: { revealed: mysteryRevealed(), used: (m as any[])[0]?.used_day != null },
+    mystery: {
+      revealed: mysteryRevealed(),
+      name: mysteryRevealed() ? MYSTERY_NAME : null,
+      blurb: mysteryRevealed() ? MYSTERY_BLURB : null,
+      revealsOn: MYSTERY_REVEAL_ISO,
+      armed: mm?.used_ref === "armed",
+      spent: mm?.used_ref === "consumed",
+      used: mm?.used_day != null,
+    },
     move: { usedToday: (t as any[]).length > 0 && (t as any[])[0].used_day != null, ref: (t as any[])[0]?.used_ref ?? null },
+  };
+}
+
+/** True (and consumed) if this user had Double Down armed — called by the grader when a pick lands. */
+export async function consumeMystery(userId: string): Promise<boolean> {
+  const rows = await db()`UPDATE boosters SET used_ref = 'consumed'
+    WHERE user_id = ${userId} AND kind = 'mystery' AND used_ref = 'armed' RETURNING user_id`;
+  return rows.length > 0;
+}
+
+/* ─────────────────────────── T6 · Late join + the knockout-only entry ───────────────────────────── */
+
+/** Enrol in the knockout board. Nothing is taken away — it is a clean slate scored only on knockout
+ * matches, which is the whole promise: turn up on matchday 3 (or at the quarter-finals) and still win. */
+export async function enterKnockouts(userId: string): Promise<{ ok: boolean; reason?: string }> {
+  const rows = await db()`UPDATE user_state SET knockout_entry = ${Date.now()}
+    WHERE user_id = ${userId} AND knockout_entry IS NULL RETURNING user_id`;
+  if (!rows.length) {
+    const has = await db()`SELECT knockout_entry FROM user_state WHERE user_id = ${userId}`;
+    if ((has as any[])[0]?.knockout_entry) return { ok: false, reason: "You're already in the knockout board." };
+    return { ok: false, reason: "Couldn't enter — try again." };
+  }
+  return { ok: true };
+}
+
+/** The knockout-only board: points earned from the knockout stage onward, for everyone who entered.
+ * Late arrivals are on exactly the same footing as day-one players — that is the point. */
+export async function knockoutBoard(userId: string): Promise<{
+  entered: boolean; open: boolean; startsOn: string;
+  rank: number; size: number; rows: { userId: string; points: number; rank: number; you: boolean }[];
+}> {
+  const st = await db()`SELECT knockout_entry FROM user_state WHERE user_id = ${userId}`;
+  const entered = !!(st as any[])[0]?.knockout_entry;
+  const open = Date.now() >= knockoutStartMs;
+  const all = await db()`
+    SELECT u.user_id, COALESCE(p.pts, 0)::int AS pts
+    FROM user_state u
+    LEFT JOIN (
+      SELECT user_id, SUM(amount)::int AS pts FROM points_events
+      WHERE ts >= ${knockoutStartMs} AND amount > 0 GROUP BY user_id
+    ) p ON p.user_id = u.user_id
+    WHERE u.knockout_entry IS NOT NULL
+    ORDER BY pts DESC, u.user_id ASC`;
+  const list = (all as any[]).map((r) => ({ userId: r.user_id as string, points: Number(r.pts) }));
+  const idx = list.findIndex((r) => r.userId === userId);
+  return {
+    entered, open, startsOn: KNOCKOUT_START_ISO,
+    rank: idx < 0 ? 0 : idx + 1,
+    size: list.length,
+    rows: list.slice(0, 30).map((r, i) => ({ userId: r.userId, points: r.points, rank: i + 1, you: r.userId === userId })),
   };
 }
 
@@ -281,11 +346,12 @@ export async function useMove(userId: string, ref: string): Promise<{ ok: boolea
   return rows.length ? { ok: true } : { ok: false, reason: "You've already used your move today." };
 }
 
-export async function useMystery(userId: string, ref: string): Promise<{ ok: boolean; reason?: string }> {
+/** Play the Mystery booster: it ARMS Double Down. The next correct call pays twice, then it's spent. */
+export async function useMystery(userId: string): Promise<{ ok: boolean; reason?: string; name?: string }> {
   if (!mysteryRevealed()) return { ok: false, reason: "It opens at the knockouts." };
-  const rows = await db()`UPDATE boosters SET used_day = ${utcDay()}, used_ref = ${ref.slice(0, 80)}
+  const rows = await db()`UPDATE boosters SET used_day = ${utcDay()}, used_ref = 'armed'
     WHERE user_id = ${userId} AND kind = 'mystery' AND used_day IS NULL RETURNING used_day`;
-  return rows.length ? { ok: true } : { ok: false, reason: "You've already played it." };
+  return rows.length ? { ok: true, name: MYSTERY_NAME } : { ok: false, reason: "You've already played it." };
 }
 
 /* ─────────────────────────── C6 / C1 · The wins ledger ──────────────────────────────────────────── */

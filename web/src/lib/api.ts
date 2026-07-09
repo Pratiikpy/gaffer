@@ -40,6 +40,28 @@ export async function streakGrid(user: string): Promise<{ cells: ("hit" | "freez
   return r.ok ? await r.json() : null;
 }
 
+/** L5/L7/L8 — the live pulse of a match: clock, halftime, whether the market has gone quiet, your open
+ * call, and whether the one-per-matchday move is available right now. */
+export type LivePulse = {
+  fixtureId: number; finished: boolean; clockSeconds: number | null; running: boolean;
+  atHalftime: boolean; secondHalf: boolean;
+  silentMs: number; silenceThresholdMs: number; marketQuiet: boolean;
+  pick: { fixtureId: number; side: string; quest: string } | null;
+  canTwist: boolean;
+};
+export async function livePulse(fixture: number, user?: string, squad?: string | null): Promise<LivePulse | null> {
+  const q = new URLSearchParams({ fixture: String(fixture) });
+  if (user) q.set("user", user);
+  if (squad) q.set("squad", squad);
+  const r = await fetch(`/api/live?${q}`, { cache: "no-store" });
+  return r.ok ? await r.json() : null;
+}
+/** L8 — twist today's free call to the other side. One move per matchday, halftime only. */
+export async function twistCall(payload: Record<string, unknown>): Promise<any> {
+  const r = await fetch("/api/live", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  return await r.json().catch(() => null);
+}
+
 /** The server-derived economy: tier, weekly league, quests + medals, percentile, wager, milestones,
  * boosters, foresight record, rollover pot, biggest wins. Pass no user for the public numbers only. */
 export type Economy = {
@@ -54,10 +76,14 @@ export type Economy = {
   wager: { status: string; startDay: number; stake: number; payout: number; targetDays: number } | null;
   wagerTerms: { stake: number; payout: number; targetDays: number };
   milestones: number[]; milestoneReached: number | null;
-  boosters: { mystery: { revealed: boolean; used: boolean }; move: { usedToday: boolean; ref: string | null } };
+  boosters: {
+    mystery: { revealed: boolean; name: string | null; blurb: string | null; revealsOn: string; armed: boolean; spent: boolean; used: boolean };
+    move: { usedToday: boolean; ref: string | null };
+  };
   foresight: { wins: number; losses: number; boldest: number | null; shotsOpened: number; shotsSealed: number };
   rollover: { lamports: number; sol: number; sources: number };
   biggestWins: { name: string; question: string; stake: number; payout: number; calledAt: number | null; settledAfterMs: number | null; ts: number }[];
+  knockouts: { entered: boolean; open: boolean; startsOn: string; rank: number; size: number; rows: { userId: string; points: number; rank: number; you: boolean }[] } | null;
 };
 export async function economyGet(user?: string): Promise<Economy | null> {
   const q = user ? `?user=${encodeURIComponent(user)}` : "";

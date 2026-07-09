@@ -4,6 +4,7 @@ import {
   lifetimeEarned, tierFor, weeklyLeague, percentileToday, medalFor, dailyQuests, weeklyBoard,
   getWager, openWager, resolveWager, checkMilestone, earnBack, rolloverPot,
   boosterState, useMove, useMystery, biggestWins, foresight, WAGER, MILESTONES, TIERS, saveStamp, getStamp,
+  enterKnockouts, knockoutBoard, MYSTERY_NAME, MYSTERY_BLURB,
 } from "@/lib/economy";
 
 export const runtime = "nodejs";
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest) {
     lifetimeEarned(user), pointsTotal(user), computeStreak(user), weeklyLeague(user), percentileToday(user),
     dailyQuests(user), weeklyBoard(user), getWager(user), boosterState(user), foresight(user), checkMilestone(user),
   ]);
+  const knockouts = await knockoutBoard(user).catch(() => null);
 
   return NextResponse.json({
     points: total,
@@ -44,6 +46,7 @@ export async function GET(req: NextRequest) {
     foresight: fore,
     rollover: pot,
     biggestWins: wins,
+    knockouts,
   });
 }
 
@@ -69,7 +72,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(r, { status: r.ok ? 200 : 400 });
       }
       case "use_mystery": {
-        const r = await useMystery(userId, String(b.ref || "mystery"));
+        const r = await useMystery(userId);
+        return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+      }
+      case "enter_knockouts": {
+        const r = await enterKnockouts(userId);
         return NextResponse.json(r, { status: r.ok ? 200 : 400 });
       }
       /** T1/S1 — the 12% Stamp. Captured server-side at the moment of the lock: the room's consensus on

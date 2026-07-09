@@ -14,6 +14,9 @@ function dbUrl() {
 const sql = neon(dbUrl());
 
 const statements = [
+  // T6 — the late-join promise: entering the knockout board is a first-class, recorded act.
+  `ALTER TABLE user_state ADD COLUMN IF NOT EXISTS knockout_entry bigint`,
+
   // T3 — Streak Wager: stake points that a run survives N matchdays.
   `CREATE TABLE IF NOT EXISTS streak_wager (
      user_id text PRIMARY KEY,

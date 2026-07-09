@@ -219,6 +219,67 @@ export async function maybeAutoFreeze(fixtureId: number, squadCode: string | nul
   return openFreeze(fixtureId, squadCode, true, teamNote);
 }
 
+/* ─────────────────────────── L2 · the Blackout silence detector ─────────────────────────────────── */
+
+/** How long the market must stay silent before we call it a Blackout. The measured gaps in the feed
+ * cluster at exactly the decisive moments — a book that stops quoting is a book that doesn't know. */
+export const SILENCE_MS = 30_000;
+
+/** Per-fixture watch: the last odds message we saw, and when it first appeared. The feed carries no
+ * reliable wall-clock on each row, so silence is measured by the message SEQUENCE going still — the
+ * one signal that can't be faked by a slow response or a clock skew. */
+const oddsWatch = new Map<number, { messageId: string; since: number }>();
+const blackoutCheck = new Map<string, number>();
+
+/** Read the newest odds MessageId for a fixture, or null when the book is quoting nothing at all. */
+async function latestOddsMessage(fixtureId: number): Promise<string | null> {
+  try {
+    const { txline } = await import("./txline");
+    const rows: any[] = await txline().oddsSnapshot(fixtureId);
+    if (!rows?.length) return null;
+    const id = rows[0]?.MessageId ?? rows[0]?.messageId;
+    return id ? String(id) : null;
+  } catch { return null; }
+}
+
+/** Pure silence bookkeeping, so the rule can be tested without a live feed:
+ *  - no quote at all        → 0ms silent, and nothing to remember (absence ≠ silence)
+ *  - a NEW message id       → the market just spoke; the clock restarts at 0
+ *  - the SAME message id    → it has been still since we first saw that id
+ * Returns the silence in ms plus the watch entry to store. */
+export function computeSilence(
+  prev: { messageId: string; since: number } | undefined,
+  id: string | null,
+  now: number,
+): { silentMs: number; next: { messageId: string; since: number } | undefined } {
+  if (!id) return { silentMs: 0, next: prev };
+  if (!prev || prev.messageId !== id) return { silentMs: 0, next: { messageId: id, since: now } };
+  return { silentMs: now - prev.since, next: prev };
+}
+
+/** How long this fixture's odds have been still, in ms. 0 when they're moving (or unknown). */
+export async function oddsSilenceMs(fixtureId: number): Promise<number> {
+  const id = await latestOddsMessage(fixtureId);
+  const { silentMs, next } = computeSilence(oddsWatch.get(fixtureId), id, Date.now());
+  if (next) oddsWatch.set(fixtureId, next);
+  return silentMs;
+}
+
+/** Real-time auto-trigger: the market goes quiet for SILENCE_MS during a live match → open a Blackout.
+ * Same guards as the Freeze: throttled, and never stacked on another round. */
+export async function maybeAutoBlackout(fixtureId: number, squadCode: string | null): Promise<RoundView | null> {
+  const key = `${fixtureId}:${squadCode ?? ""}`;
+  if (Date.now() - (blackoutCheck.get(key) || 0) < 10_000) return null;
+  blackoutCheck.set(key, Date.now());
+  const silent = await oddsSilenceMs(fixtureId);
+  if (silent < SILENCE_MS) return null;
+  const recent = await db()`SELECT 1 FROM rounds WHERE fixture_id = ${fixtureId} AND opened_at > ${Date.now() - FREEZE_MS} LIMIT 1`;
+  if (recent.length) return null;
+  // Reset the watch so one silence opens exactly one Blackout.
+  oddsWatch.delete(fixtureId);
+  return openBlackout(fixtureId, squadCode, "The market has stopped quoting. Nobody knows what just happened.");
+}
+
 /** The active (unsettled) round a fan should see for this fixture — squad-scoped first, else a global one. */
 export async function getActiveRound(fixtureId: number, squadCode: string | null): Promise<RoundView | null> {
   const rows = await db()`

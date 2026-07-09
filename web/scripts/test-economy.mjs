@@ -106,6 +106,33 @@ t("weekStart is stable within a week and jumps exactly 7d across it", () => {
   assert.strictEqual(c - a, 7 * 86400000, "next week is +7d");
 });
 
+console.log("Mystery booster (T7) — Double Down arms once and cannot be double-spent:");
+{
+  const u = "test_user_" + Date.now();
+  await sql`INSERT INTO boosters (user_id, kind, granted_day, ts) VALUES (${u}, 'mystery', 0, ${Date.now()}) ON CONFLICT DO NOTHING`;
+  // arm it (what useMystery does)
+  const armed = await sql`UPDATE boosters SET used_day = 1, used_ref = 'armed' WHERE user_id = ${u} AND kind = 'mystery' AND used_day IS NULL RETURNING user_id`;
+  // arming twice must fail
+  const rearm = await sql`UPDATE boosters SET used_day = 1, used_ref = 'armed' WHERE user_id = ${u} AND kind = 'mystery' AND used_day IS NULL RETURNING user_id`;
+  // consume it (what the grader does) — exactly once
+  const c1 = await sql`UPDATE boosters SET used_ref = 'consumed' WHERE user_id = ${u} AND kind = 'mystery' AND used_ref = 'armed' RETURNING user_id`;
+  const c2 = await sql`UPDATE boosters SET used_ref = 'consumed' WHERE user_id = ${u} AND kind = 'mystery' AND used_ref = 'armed' RETURNING user_id`;
+  n++; if (armed.length === 1 && rearm.length === 0 && c1.length === 1 && c2.length === 0) { pass++; console.log("  ✓ arms once, consumes once, never twice"); }
+  else console.log("  ✗ booster invariant broken:", armed.length, rearm.length, c1.length, c2.length);
+  await sql`DELETE FROM boosters WHERE user_id = ${u}`;
+}
+
+console.log("Knockout entry (T6) — recorded once, idempotent:");
+{
+  const u = "test_user_k" + Date.now();
+  await sql`INSERT INTO user_state (user_id, freezes, created_at) VALUES (${u}, 2, ${Date.now()}) ON CONFLICT DO NOTHING`;
+  const e1 = await sql`UPDATE user_state SET knockout_entry = ${Date.now()} WHERE user_id = ${u} AND knockout_entry IS NULL RETURNING user_id`;
+  const e2 = await sql`UPDATE user_state SET knockout_entry = ${Date.now()} WHERE user_id = ${u} AND knockout_entry IS NULL RETURNING user_id`;
+  n++; if (e1.length === 1 && e2.length === 0) { pass++; console.log("  ✓ enters once; a second entry changes nothing"); }
+  else console.log("  ✗ knockout entry not idempotent:", e1.length, e2.length);
+  await sql`DELETE FROM user_state WHERE user_id = ${u}`;
+}
+
 console.log("Rollover ledger (T4) — dust is claimed once, ever:");
 const tmp = "test_market_" + Date.now();
 const first = await sql`INSERT INTO swept_markets (market, lamports, ts) VALUES (${tmp}, 5, ${Date.now()}) ON CONFLICT (market) DO NOTHING RETURNING market`;

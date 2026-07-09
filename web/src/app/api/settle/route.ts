@@ -7,6 +7,7 @@ import { RPC, TXORACLE } from "@/lib/config";
 import { loadServerKeypair } from "@/lib/serverConfig";
 import { txline } from "@/lib/txline";
 import { prettyErr } from "@/lib/errcopy";
+import { recordSettle } from "@/lib/economy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
       const sig = await program.methods.settle(new BN(seedTs), fixtureSummary, bundle.subTreeProof.map(node), bundle.mainTreeProof.map(node), statA, null, null)
         .accounts({ settler: kp.publicKey, market: marketPk, dailyScoresMerkleRoots: dsr, txoracleProgram: TXORACLE })
         .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })]).rpc();
+      // C1 — how fast we paid, measured from the proof's own last match timestamp (not a guess).
+      const matchTs = Number(bundle.summary.updateStats.maxTimestamp) || 0;
+      await recordSettle(market, fixtureId, matchTs, Math.max(0, Date.now() - matchTs)).catch(() => {});
       return NextResponse.json({ settled: true, sig, provenValue: bundle.statToProve.value });
     } catch (e: any) {
       return NextResponse.json({ settled: false, reason: prettyErr(e, "neutral"), code: e.error?.errorCode?.code || "" });

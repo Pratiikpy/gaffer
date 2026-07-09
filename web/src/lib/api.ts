@@ -39,6 +39,36 @@ export async function streakGrid(user: string): Promise<{ cells: ("hit" | "freez
   const r = await fetch(`/api/streak-grid?user=${encodeURIComponent(user)}`, { cache: "no-store" });
   return r.ok ? await r.json() : null;
 }
+
+/** The server-derived economy: tier, weekly league, quests + medals, percentile, wager, milestones,
+ * boosters, foresight record, rollover pot, biggest wins. Pass no user for the public numbers only. */
+export type Economy = {
+  points: number; lifetimeEarned: number;
+  tier: { name: string; index: number; next: string | null; toNext: number; pct: number };
+  tiersAll: { name: string; min: number }[];
+  streak: number; freezes: number;
+  league: { league: number; rank: number; size: number; weekStart: number; rows: { userId: string; points: number; rank: number; you: boolean }[] };
+  percentileToday: number | null; medalToday: "gold" | "silver" | "bronze" | null;
+  quests: { quests: { id: string; label: string; done: boolean }[]; done: number; total: number; medal: "gold" | "silver" | "bronze" | null };
+  weeklyBoard: { items: { id: string; label: string; done: boolean; endowed?: boolean }[]; done: number; total: number };
+  wager: { status: string; startDay: number; stake: number; payout: number; targetDays: number } | null;
+  wagerTerms: { stake: number; payout: number; targetDays: number };
+  milestones: number[]; milestoneReached: number | null;
+  boosters: { mystery: { revealed: boolean; used: boolean }; move: { usedToday: boolean; ref: string | null } };
+  foresight: { wins: number; losses: number; boldest: number | null; shotsOpened: number; shotsSealed: number };
+  rollover: { lamports: number; sol: number; sources: number };
+  biggestWins: { name: string; question: string; stake: number; payout: number; calledAt: number | null; settledAfterMs: number | null; ts: number }[];
+};
+export async function economyGet(user?: string): Promise<Economy | null> {
+  const q = user ? `?user=${encodeURIComponent(user)}` : "";
+  const r = await fetch(`/api/economy${q}`, { cache: "no-store" });
+  return r.ok ? await r.json() : null;
+}
+/** Economy spends/moves: open_wager | earn_back | use_move | use_mystery. Token-guarded server-side. */
+export async function economyDo(action: string, payload: Record<string, unknown>): Promise<any> {
+  const r = await fetch("/api/economy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+  return await r.json().catch(() => null);
+}
 /** Build the spoiler-free, paste-anywhere emoji grid string (Y2 — Wordle-style share physics). */
 export function streakGridText(cells: ("hit" | "freeze" | "miss")[], streak: number, alivePct: number | null): string {
   const row = cells.map((c) => (c === "hit" ? "✅" : c === "freeze" ? "🧊" : "⬜")).join("");

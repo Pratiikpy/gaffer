@@ -4,7 +4,8 @@ import { BrowserKernel } from "@/lib/kernelClient";
 import { BrowserParlay } from "@/lib/parlayClient";
 import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
-import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall } from "@/lib/api";
+import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
+import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
@@ -28,6 +29,9 @@ const FIXTURES: Record<string, { home: string; away: string }> = {
 const FIXTURE_NAMES: Record<string, { home: string; away: string }> = { ...FIXTURES };
 function learnFixtures(list: any[]) { for (const f of list || []) { const id = String(f.fixtureId); const home = f.home || f.homeTeam, away = f.away || f.awayTeam; if (id && home && away) FIXTURE_NAMES[id] = { home, away }; } }
 const fx = (fixtureId: string | number) => FIXTURE_NAMES[String(fixtureId)] || { home: "Home", away: "Away" };
+/** Do we actually know who played? Audit #7: a money card may never say "Home v Away". Anything we
+ * cannot name is a synthetic/dev pool and has no business on a surface where real money is shown. */
+const fxKnown = (fixtureId: string | number) => !!FIXTURE_NAMES[String(fixtureId)];
 const STATWORD = ["", "goal", "goal", "booking", "booking", "red card", "red card", "corner", "corner"];
 // Canonical nations a fan can fly (names match the flag map in /api/nations so standings stay consistent).
 const PICK_NATIONS = [
@@ -61,7 +65,9 @@ function label(m: MarketView) {
   return { match: `${f.home} v ${f.away}`, q: humanQ(who, base, m.comparison, m.threshold), f };
 }
 /** Test/nonsense pools (negative or absurd thresholds) never reach the consumer surfaces. */
-function realMarket(m: MarketView) { return m.threshold >= 0 && m.threshold <= 40; }
+/** A pool is "real" only if its predicate is sane AND we can name the match it belongs to. The second
+ * half is what keeps synthetic dev pools (fixture 99999999) off every money surface. */
+function realMarket(m: MarketView) { return m.threshold >= 0 && m.threshold <= 40 && fxKnown(m.fixtureId); }
 /** One consistent money format everywhere — no bare 3-vs-2-decimal drift, no jargon unit. Money is shown
  * in "coins", the app's felt unit — never SOL/crypto terms (felt-not-shown). `money()` appends the unit
  * for standalone amounts; `fmtAmt()` stays bare for tight inline stats and side-by-side pot readouts. */
@@ -158,6 +164,9 @@ export default function GafferApp() {
   const refresh = useCallback(async () => {
     try {
       const [mk, pl] = await Promise.all([getMarkets(), listParlays()]);
+      // Markets carry their own fixture names (server-joined from the durable cache), so a pool on a
+      // match that has dropped off the live slate still names itself instead of "Home v Away".
+      learnFixtures(mk as any[]);
       setMarkets(mk); setParlays(pl);
       if (kernel) { setBal(await kernel.balanceSol()); setPositions(await kernel.myPositions()); }
     } catch {
@@ -257,6 +266,30 @@ export default function GafferApp() {
     }
   }, [userId]);
   useEffect(() => { refreshPoints(); }, [refreshPoints]);
+
+  // The economy (tier, league, quests, medals, wager, milestones, boosters, rollover) is derived
+  // server-side from the same ledger — a quest tick or a tier can never be asserted by this client.
+  const [econ, setEcon] = useState<Economy | null>(null);
+  const refreshEcon = useCallback(async () => { setEcon(await economyGet(userId || undefined)); }, [userId]);
+  useEffect(() => { refreshEcon(); }, [refreshEcon]);
+  // A milestone is returned exactly once (the server banks it) — mint its share card the moment it lands.
+  const [milestone, setMilestone] = useState<number | null>(null);
+  useEffect(() => { if (econ?.milestoneReached) setMilestone(econ.milestoneReached); }, [econ?.milestoneReached]);
+
+  // T3 — the wager and the one-time Earn-Back repair. Both are point SPENDS, so both go through the
+  // token-guarded economy route; the client never adjusts a total itself.
+  const [econBusy, setEconBusy] = useState(false);
+  const econAct = useCallback(async (action: "open_wager" | "earn_back", okMsg: string) => {
+    if (!userId || econBusy) return;
+    setEconBusy(true);
+    try {
+      const r = await economyDo(action, { userId, token: localStorage.getItem("gaffer_ptoken") || "" });
+      if (r?.ok) { flash(okMsg, "ok"); await Promise.all([refreshEcon(), refreshPoints()]); }
+      else flash(r?.reason || "That didn't go through — try again.", "err");
+    } finally { setEconBusy(false); }
+  }, [userId, econBusy, refreshEcon, refreshPoints]);
+  const onWager = useCallback(() => econAct("open_wager", "Wager placed — keep the run alive."), [econAct]);
+  const onEarnBack = useCallback(() => econAct("earn_back", "Run repaired. Pick up where you left off."), [econAct]);
   // The per-user token guards every points grant (so no one can mint points for another id).
   const pTok = () => (typeof window !== "undefined" ? localStorage.getItem("gaffer_ptoken") || "" : "");
 
@@ -344,6 +377,9 @@ export default function GafferApp() {
       const sig = await kernel.join(sheet.m.pubkey, sheet.side, stake);
       // Points are granted server-side ONLY after verifying this exact tx on-chain, signed by the user.
       pointsApi("stake", { userId, token: pTok(), sig, squadCode: squadCode || null }).then((r) => { if (r?.points != null) setPoints(r.points); });
+      // S1/T1 — bank the stamp server-side, anchored to the odds message that existed at this instant.
+      // localStorage above is only an offline echo; the receipt reads the server's copy.
+      economyDo("stamp", { userId, token: pTok(), market: sheet.m.pubkey, side: sheet.side === 1 ? "yes" : "no", calledAt: share, fixtureId: Number(sheet.m.fixtureId) || 0 });
       if (squadCode) squadApi("call", { code: squadCode, userId, token: sqTok(), name: userName, market: sheet.m.pubkey, side: sheet.side, q: label(sheet.m).q, sealed: shot.trim() || undefined }).then((r) => r?.squad && setSquadData(r.squad));
       setShot(""); // clear the sealed line once it's ridden along with the call
       // In-context success: the sheet flips to "you're riding X" for a beat, then closes (audit #2 — never a silent close).
@@ -379,10 +415,25 @@ export default function GafferApp() {
       if (m.status === 1) {
         const staked = (posYes?.amount || 0);
         const calledAt = Number(localStorage.getItem("gaffer_calledat_" + m.pubkey)) || null;
-        const receipt = { amount: total, q: label(m).q, sig: lastSig, when: new Date().toLocaleString(), calledAt, staked, mult: staked > 0 ? total / staked : null };
+        const receipt = { amount: total, q: label(m).q, sig: lastSig, when: new Date().toLocaleString(), calledAt, staked, mult: staked > 0 ? total / staked : null, market: m.pubkey };
         keepReceipt(receipt);
         setPaid(receipt);
-        pointsApi("win", { userId, token: pTok(), sig: lastSig, squadCode: squadCode || null }).then((r) => { if (r?.points != null) setPoints(r.points); });
+        // The server re-derives the payout from this very transaction; market/question/stake are only
+        // context for the receipt and the public feed — the money numbers are never taken on trust.
+        pointsApi("win", {
+          userId, token: pTok(), sig: lastSig, squadCode: squadCode || null,
+          name: userName, question: label(m).q, market: m.pubkey, stakeLamports: Math.round(staked * 1e9),
+        }).then((r) => {
+          if (r?.points != null) setPoints(r.points);
+          // The server owns both of these: "settled Ns after full-time" (measured off the proof) and the
+          // stamp (captured at the lock). localStorage is only a fallback for an offline first paint.
+          setPaid((p: any) => (p ? {
+            ...p,
+            ...(r?.settledAfterMs != null ? { settledAfterMs: r.settledAfterMs } : {}),
+            ...(r?.calledAt != null ? { calledAt: r.calledAt, mult: p.staked > 0 ? p.amount / p.staked : p.mult } : {}),
+          } : p));
+          refreshEcon();
+        });
       } else { flash(`Refunded ${total.toFixed(3)}`); }
       setDetail(null); await refresh();
     } catch (e: any) { flash(prettyErr(e), "err"); } finally { setBusy(null); }
@@ -497,11 +548,11 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} />}
-        {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} {...shared} />}
-        {tab === "you" && <You streak={streak} bal={bal} points={points} nation={nation} userName={userName} userId={userId} flash={flash} cfg={cfg} muted={MONEY_MUTED} toggleMute={toggleMute} spoiler={SPOILER_SAFE} toggleSpoiler={toggleSpoiler} />}
+        {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
+        {tab === "you" && <You streak={streak} bal={bal} points={points} nation={nation} userName={userName} userId={userId} flash={flash} cfg={cfg} muted={MONEY_MUTED} toggleMute={toggleMute} spoiler={SPOILER_SAFE} toggleSpoiler={toggleSpoiler} econ={econ} onWager={onWager} onEarnBack={onEarnBack} econBusy={econBusy} />}
       </main>
 
       {/* The sweat, ambient: your open calls tracked in one thin line, on every tab (bet365's in-play
@@ -545,7 +596,22 @@ export default function GafferApp() {
       )}
       {ambient && <AmbientView fixtureId={selectedFixture} positions={positions} onClose={() => setAmbient(false)} />}
       {!ambient && !paid && tab === "today" && <button onClick={() => setAmbient(true)} className="fixed bottom-40 left-3 z-30 w-10 h-10 rounded-full bg-[var(--ink)] text-white flex items-center justify-center shadow-lg" aria-label="Ambient mode">⛶</button>}
-      {paid && <PaidOverlay paid={paid} close={() => setPaid(null)} flash={flash} />}
+      {paid && <PaidOverlay paid={paid} close={() => setPaid(null)} flash={flash} econ={econ} />}
+      {milestone != null && (
+        <MilestoneCard
+          days={milestone}
+          onClose={() => setMilestone(null)}
+          onShare={async () => {
+            const g = await streakGridApi(userId);
+            const text = g ? streakGridText(g.cells, g.streak, g.alivePct) : `${milestone}-day run on GAFFER.`;
+            try {
+              if ((navigator as any).share) await (navigator as any).share({ text });
+              else { await navigator.clipboard.writeText(text); flash("Milestone copied"); }
+            } catch { /* dismissed */ }
+            setMilestone(null);
+          }}
+        />
+      )}
       {DEV && !paid && <button onClick={() => setPaid({ amount: 61.4, q: "Egypt to score before half-time?", when: new Date().toLocaleString(), calledAt: 23, staked: 5, mult: 12.28, sig: "" })} className="fixed bottom-40 right-3 z-30 px-3 py-2 rounded-lg bg-[var(--ink)] text-white mono text-[10px] opacity-60">▸ preview PAID</button>}
       {slip.length > 0 && !slipOpen && <button onClick={() => setSlipOpen(true)} className="fixed bottom-[120px] left-1/2 -translate-x-1/2 z-30 px-5 py-3 rounded-full bg-[var(--green)] text-white font-bold shadow-lg">Slip · {slip.length} call{slip.length === 1 ? "" : "s"} →</button>}
       {slipOpen && <SlipSheet slip={slip} removeFromSlip={removeFromSlip} placeSlip={placeSlip} close={() => setSlipOpen(false)} busy={busy} />}
@@ -868,37 +934,220 @@ function PlayHub({ onGo }: { onGo: (tab: string) => void }) {
 
 /** Daily goals — the endowed-progress nudge (T2). Progress is derived live from real actions the fan
  * has already taken (free pick / a staked call / an alive streak) — never a fake counter. */
-function QuestBoard({ freePicked, hasCall, streak }: { freePicked: boolean; hasCall: boolean; streak: number }) {
-  const quests = [
-    { done: !!freePicked, label: "Make today's free call" },
-    { done: !!hasCall, label: "Back a call with coins" },
-    { done: streak > 0, label: "Keep your streak alive" },
-  ];
-  const done = quests.filter((q) => q.done).length;
+/** Y7 — a drawn medal (never an emoji): a filled disc with a ribbon notch, tinted by tier. */
+function Medal({ tier, size = 18 }: { tier: "gold" | "silver" | "bronze"; size?: number }) {
+  const fill = tier === "gold" ? "#D8A32B" : tier === "silver" ? "#A8AFB5" : "#B0754A";
+  const rim = tier === "gold" ? "#B98718" : tier === "silver" ? "#8B9298" : "#8E5A36";
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-label={`${tier} medal`} role="img" className="shrink-0">
+      <circle cx="10" cy="11.5" r="6.5" fill={fill} stroke={rim} strokeWidth="1.2" />
+      <path d="M6.6 5.2 4.4 1.4h3.1l1.9 3.3zM13.4 5.2l2.2-3.8h-3.1l-1.9 3.3z" fill={rim} />
+      <circle cx="10" cy="11.5" r="3.1" fill="none" stroke={rim} strokeWidth="0.9" opacity="0.65" />
+    </svg>
+  );
+}
+
+/** T2 — the daily quest board. Every tick is SERVER-VERIFIED (derived from the points ledger the
+ * server itself wrote), so a quest can never be completed by a client that merely says so. A medal
+ * lands at 1/2/3 done (bronze/silver/gold), and the weekly board of 10 opens beneath it — two of
+ * which arrive pre-completed (endowed progress: 34% vs 19% completion, Nunes & Drèze). */
+function QuestBoard({ econ }: { econ: Economy | null }) {
+  const [showWeek, setShowWeek] = useState(false);
+  const quests = econ?.quests?.quests ?? [];
+  const done = econ?.quests?.done ?? 0;
+  const total = econ?.quests?.total ?? 3;
+  const medal = econ?.quests?.medal ?? null;
+  const week = econ?.weeklyBoard;
+
   return (
     <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
       <div className="flex items-center justify-between">
         <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Today&apos;s goals</span>
-        <span className="mono text-[10px] font-bold text-[var(--green)]">{done}/3 done</span>
+        <span className="flex items-center gap-1.5">
+          {medal ? <Medal tier={medal} size={16} /> : null}
+          <span className="mono text-[10px] font-bold text-[var(--green)]">{done}/{total} done</span>
+        </span>
       </div>
       <div className="mt-3 space-y-2">
-        {quests.map((q, i) => (
-          <div key={i} className="flex items-center gap-2.5">
+        {(quests.length ? quests : [{ id: "l", label: "Loading your goals…", done: false }]).map((q) => (
+          <div key={q.id} className="flex items-center gap-2.5">
             <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${q.done ? "bg-[var(--green)] text-white" : "border-2 border-[var(--line)] text-transparent"}`}>✓</span>
             <span className={`text-sm ${q.done ? "text-[var(--muted)] line-through" : "font-semibold"}`}>{q.label}</span>
           </div>
         ))}
       </div>
-      {done < 3 ? (
-        <div className="mt-3 h-1.5 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full bg-[var(--green)] transition-all duration-500" style={{ width: `${(done / 3) * 100}%` }} /></div>
+      {done < total ? (
+        <div className="mt-3 h-1.5 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full bg-[var(--green)] transition-all duration-500" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} /></div>
       ) : (
         <div className="mt-3 text-[12px] font-bold text-[var(--green)]">All done — you&apos;re on a roll. Back tomorrow to keep it going.</div>
+      )}
+
+      {week ? (
+        <>
+          <button onClick={() => setShowWeek((v) => !v)} className="mt-3 w-full text-left mono text-[10px] tracking-widest uppercase text-[var(--muted)] flex items-center justify-between">
+            <span>This week · {week.done}/{week.total}</span>
+            <span className="text-[var(--green)] font-bold">{showWeek ? "hide" : "show"}</span>
+          </button>
+          <div className="mt-2 h-1.5 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full bg-[var(--green)] transition-all duration-700" style={{ width: `${(week.done / Math.max(1, week.total)) * 100}%` }} /></div>
+          {showWeek ? (
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
+              {week.items.map((it) => (
+                <div key={it.id} className="flex items-center gap-1.5">
+                  <span className={`w-3.5 h-3.5 rounded-full shrink-0 ${it.done ? "bg-[var(--green)]" : "border-2 border-[var(--line)]"}`} />
+                  <span className={`text-[11px] ${it.done ? "text-[var(--muted)]" : "font-medium"}`}>{it.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** T4 — the rollover headline pot. Every remainder a settled pool leaves behind (rounding dust and
+ * anything never collected) carries into the next day's headline pool. It is a real, on-chain number
+ * read back off the vaults — it only ever grows, and it is never shown as a rounded-up guess. */
+function RolloverPot({ econ }: { econ: Economy | null }) {
+  const pot = econ?.rollover;
+  // Hide until it would actually read as a number. Rounding dust starts at a few lamports; printing
+  // "0.000 coins" is worse than printing nothing, and we never round a pot up to look bigger.
+  if (!pot || pot.sol < 0.0005) return null;
+  return (
+    <div className="mt-4 rounded-2xl p-4 bg-[var(--dark)] text-white relative overflow-hidden">
+      <div className="absolute -right-8 -top-10 w-32 h-32 rounded-full bg-[var(--green)] opacity-[0.16] blur-2xl" />
+      <span className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Rolls into tomorrow</span>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-3xl font-black tabular-nums">{pot.sol.toFixed(3)}</span>
+        <span className="mono text-[11px] opacity-70">coins</span>
+      </div>
+      <p className="mt-1 text-[12px] opacity-75 leading-snug">
+        Left over from {pot.sources} settled {pot.sources === 1 ? "pool" : "pools"}. Nobody keeps it — it grows tomorrow&apos;s headline pot.
+      </p>
+    </div>
+  );
+}
+
+/** Y3 — status tier. Read from LIFETIME EARNED, so spending points can never demote you (the fix for
+ * the hoarding failure every points economy hits). The bar shows the climb to the next rank. */
+function TierCard({ econ }: { econ: Economy | null }) {
+  if (!econ?.tier) return null;
+  const t = econ.tier;
+  return (
+    <div className="bg-white border border-[var(--line)] rounded-2xl p-4">
+      <div className="flex items-center justify-between">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Your rank</span>
+        <span className="mono text-[10px] text-[var(--muted)]">{econ.lifetimeEarned.toLocaleString()} earned</span>
+      </div>
+      <div className="mt-1 text-xl font-black">{t.name}</div>
+      {t.next ? (
+        <>
+          <div className="mt-2 h-1.5 rounded-full bg-[#FAFAF7] overflow-hidden">
+            <div className="h-full bg-[var(--green)] transition-all duration-700" style={{ width: `${Math.min(100, Math.max(2, t.pct))}%` }} />
+          </div>
+          <p className="mt-1.5 text-[12px] text-[var(--muted)]">{t.toNext.toLocaleString()} more to reach <b className="text-[var(--ink)]">{t.next}</b>.</p>
+        </>
+      ) : (
+        <p className="mt-1.5 text-[12px] font-bold text-[var(--green)]">Top rank. Nothing above this.</p>
+      )}
+      <p className="mt-2 text-[11px] text-[var(--muted)] leading-snug">Ranks are earned for life. Spending never takes one back.</p>
+    </div>
+  );
+}
+
+/** Y3 — the weekly league of 30. Resets Monday; everyone you can actually catch is on this one table. */
+function LeagueTable({ econ, name }: { econ: Economy | null; name: string }) {
+  const L = econ?.league;
+  if (!L || !L.rows?.length) return null;
+  return (
+    <div className="bg-white border border-[var(--line)] rounded-2xl p-4">
+      <div className="flex items-center justify-between">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">League {L.league} · this week</span>
+        <span className="mono text-[10px] font-bold text-[var(--green)]">#{L.rank} of {L.size}</span>
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {L.rows.slice(0, 8).map((r) => (
+          <div key={r.userId} className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 ${r.you ? "bg-[#F1F7F3]" : ""}`}>
+            <span className="mono text-[11px] w-5 text-[var(--muted)] tabular-nums">{r.rank}</span>
+            {r.rank <= 3 ? <Medal tier={r.rank === 1 ? "gold" : r.rank === 2 ? "silver" : "bronze"} size={15} /> : <span className="w-[15px]" />}
+            <span className={`text-sm flex-1 truncate ${r.you ? "font-black" : "font-medium"}`}>{r.you ? `${name || "You"} (you)` : `Caller ${r.userId.slice(0, 4)}`}</span>
+            <span className="mono text-[12px] font-bold tabular-nums">{r.points}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** T3 — the Streak Wager. Duolingo's own A/B put this at +14% D7, their best-measured mechanic.
+ * Stake points that your run survives a week; double them if it does. Losing costs only the stake —
+ * never your run, never real money. Earn-Back repairs a dead run once, for points. */
+function WagerCard({ econ, onWager, onEarnBack, busy }: { econ: Economy | null; onWager: () => void; onEarnBack: () => void; busy?: boolean }) {
+  if (!econ) return null;
+  const w = econ.wager, terms = econ.wagerTerms, alive = econ.streak > 0;
+  const daysIn = w && w.status === "open" ? Math.max(0, Math.floor(Date.now() / 86400000) - w.startDay) : 0;
+
+  if (w?.status === "open") {
+    return (
+      <div className="bg-white border border-[var(--line)] rounded-2xl p-4">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Streak wager</span>
+        <div className="mt-1 text-sm font-bold">{w.stake} riding on {w.targetDays} days.</div>
+        <div className="mt-2 flex gap-1">
+          {Array.from({ length: w.targetDays }).map((_, i) => (
+            <div key={i} className={`h-1.5 flex-1 rounded-full ${i < Math.min(econ.streak, w.targetDays) ? "bg-[var(--green)]" : "bg-[#FAFAF7] border border-[var(--line)]"}`} />
+          ))}
+        </div>
+        <p className="mt-2 text-[12px] text-[var(--muted)]">Day {Math.min(econ.streak, w.targetDays)} of {w.targetDays}. Keep the run alive and it pays {w.payout}.</p>
+      </div>
+    );
+  }
+  if (w?.status === "won") return <div className="bg-[#F1F7F3] border border-[var(--green)] rounded-2xl p-4"><span className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Wager won</span><div className="mt-1 text-sm font-bold">Your run held. {w.payout} banked.</div></div>;
+
+  return (
+    <div className="bg-white border border-[var(--line)] rounded-2xl p-4">
+      <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Streak wager</span>
+      {alive ? (
+        <>
+          <div className="mt-1 text-sm font-bold">Put {terms.stake} on your run lasting {terms.targetDays} days.</div>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">It survives → <b className="text-[var(--ink)]">{terms.payout}</b>. It doesn&apos;t → you lose the {terms.stake}. Nothing else, ever.</p>
+          <button onClick={onWager} disabled={busy || econ.points < terms.stake}
+            className="mt-3 w-full py-2.5 rounded-xl bg-[var(--dark)] text-white font-bold text-sm disabled:opacity-40">
+            {econ.points < terms.stake ? `Need ${terms.stake} points` : `Place the wager`}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="mt-1 text-sm font-bold">Your run is out.</div>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">Repair it once for 100 points and pick up where you left off.</p>
+          <button onClick={onEarnBack} disabled={busy || econ.points < 100}
+            className="mt-3 w-full py-2.5 rounded-xl border-2 border-[var(--line)] font-bold text-sm disabled:opacity-40">
+            {econ.points < 100 ? "Need 100 points" : "Earn it back — 100"}
+          </button>
+        </>
       )}
     </div>
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo }: any) {
+/** T3 — a milestone card, minted the first time a run reaches 3 / 7 / 14 / 21 / 33 days. */
+function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () => void; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-[var(--dark)]/90 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-white rounded-3xl p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto w-fit"><Medal tier={days >= 21 ? "gold" : days >= 7 ? "silver" : "bronze"} size={44} /></div>
+        <div className="mt-3 text-4xl font-black tabular-nums">{days}</div>
+        <div className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">day run</div>
+        <p className="mt-3 text-sm text-[var(--muted)]">You&apos;ve shown up {days} days straight. Most people never get here.</p>
+        <div className="mt-5 flex gap-2">
+          <button onClick={onShare} className="flex-1 py-3 rounded-xl bg-[var(--green)] text-white font-bold text-sm">Share it</button>
+          <button onClick={onClose} className="flex-1 py-3 rounded-xl border-2 border-[var(--line)] font-bold text-sm">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -934,7 +1183,8 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
         </div>
       </div>
 
-      <QuestBoard freePicked={freePicked} hasCall={positions.length > 0} streak={streak} />
+      <QuestBoard econ={econ} />
+      <RolloverPot econ={econ} />
       {selectedFixture && <MarketRead fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
       {selectedFixture && <DramaMeter fixtureId={selectedFixture} />}
       {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} /> : null; })()}
@@ -1224,46 +1474,105 @@ function AmbientView({ fixtureId, positions = [], onClose }: any) {
   );
 }
 
-function PaidOverlay({ paid, close, flash }: any) {
+/** C1 — the match-timeline strip: the moment you called it, drawn to the moment it paid. A dot where
+ * the call went in, a gold flare where the money landed. No fabricated minutes — if we don't know when
+ * the call was made relative to full-time, the strip simply doesn't draw. */
+function TimelineStrip({ calledPct }: { calledPct: number | null }) {
+  if (calledPct == null) return null;
+  const x = Math.min(92, Math.max(6, calledPct));
+  return (
+    <div className="mt-3">
+      <div className="relative h-6">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-[#EDEDE8]" />
+        <div className="absolute top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-[var(--green)]" style={{ left: `${x}%`, right: 0 }} />
+        <div className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-[var(--ink)] ring-2 ring-white" style={{ left: `calc(${x}% - 5px)` }} />
+        <div className="absolute top-1/2 -translate-y-1/2 right-0 w-4 h-4 rounded-full bg-[#D8A32B] ring-2 ring-white" style={{ boxShadow: "0 0 10px rgba(216,163,43,0.7)" }} />
+      </div>
+      <div className="flex justify-between mono text-[9px] uppercase tracking-widest text-[#9CA3AF]">
+        <span>called it</span><span>paid</span>
+      </div>
+    </div>
+  );
+}
+
+/** "settled 43s after full-time" — only ever printed for a genuinely live settlement. */
+function settledAfterLabel(ms: number | null | undefined): string | null {
+  if (ms == null || ms < 0 || ms >= 3_600_000) return null;  // a replayed fixture settles days later; don't brag
+  const s = Math.round(ms / 1000);
+  return s < 90 ? `settled ${s}s after full-time` : `settled ${Math.round(s / 60)} min after full-time`;
+}
+
+function PaidOverlay({ paid, close, flash, econ }: any) {
   const contrarian = paid.calledAt != null && paid.calledAt <= 40;
-  // Choreography (C2): a brief hush, a haptic "land", then the number counts up from zero — we
-  // celebrate the OUTCOME (being right), never the stake. iOS has no vibration API; motion carries it.
+  // Choreography (C2): a brief hush, a haptic "land" + the opt-in chime, then the number counts up
+  // from zero — we celebrate the OUTCOME (being right), never the stake.
   const [amt, setAmt] = useState(0);
   useEffect(() => {
-    try { (navigator as any).vibrate?.([0, 45, 35, 70]); } catch { /* iOS: no vibration API */ }
+    hapticPaid();
+    playPaid();                                   // silent unless the fan turned Stadium sound on
     const t = setTimeout(() => setAmt(paid.amount), 260);
     return () => clearTimeout(t);
   }, [paid.amount]);
+
+  const stake = Number(paid.staked) || 0;
+  const settled = settledAfterLabel(paid.settledAfterMs);
+  const rec = econ?.foresight;
+  const record = rec && rec.wins + rec.losses > 0 ? `${rec.wins}–${rec.losses} this Cup` : null;
+
   const share = async () => {
-    const stamp = paid.calledAt != null ? ` Called it at ${paid.calledAt}%${paid.mult ? ` — paid ${paid.mult.toFixed(2)}×` : ""}.` : "";
-    const text = `I called it on GAFFER — +${money(paid.amount)} on "${paid.q}".${stamp} Paid the second it happened. 🟢 gaffer-cyan.vercel.app`;
+    const pair = stake > 0 ? `${money(stake)} → ${money(paid.amount)}. ` : "";
+    const stamp = paid.calledAt != null ? `Called it at ${paid.calledAt}%${paid.mult ? ` — paid ${paid.mult.toFixed(2)}×` : ""}. ` : "";
+    const fast = settled ? `${settled[0].toUpperCase()}${settled.slice(1)}. ` : "";
+    const rc = record ? `${record}. ` : "";
+    const text = `I called it on GAFFER — ${pair}"${paid.q}". ${stamp}${fast}${rc}Paid the second it happened. 🟢 gaffer-cyan.vercel.app`;
     try {
       if ((navigator as any).share) await (navigator as any).share({ text });
       else { await navigator.clipboard.writeText(text); flash?.("Receipt copied — paste it in the chat"); }
     } catch { /* dismissed */ }
   };
+
   return (
     <div className="fixed inset-0 z-40 flex flex-col items-center justify-center text-white px-7" style={{ background: "radial-gradient(120% 90% at 50% 30%, #047857, #064e3b)" }}>
       <div className="absolute top-[18%] w-52 h-52 rounded-full border-2 border-white/30 gf-ring" />
-      {/* Proof-of-Payout card */}
+      {/* Proof-of-Payout v2 */}
       <div className="relative gf-pop w-full max-w-xs bg-white text-[var(--ink)] rounded-3xl p-6 shadow-2xl">
         <div className="flex items-center justify-between">
           <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Receipt</span>
           <span className="text-[9px] font-bold text-white bg-[var(--green)] rounded-full px-2 py-0.5">✓ VERIFIED</span>
         </div>
-        <div className="w-16 h-16 mx-auto rounded-full bg-[var(--green)] flex items-center justify-center text-white text-3xl font-black mt-4">✓</div>
-        <div className="mono text-[10px] tracking-[0.25em] uppercase text-[var(--muted)] mt-4 text-center">You called it</div>
-        <div className="text-[54px] font-extrabold tracking-tight leading-none mt-1 text-center text-[var(--green)]">+<TickNum value={amt} /></div>
-        <div className="text-center text-[var(--muted)] text-sm">{COIN} · it&apos;s yours</div>
-        <div className="text-center text-base font-bold mt-3">{paid.q}</div>
-        <div className="text-center mono text-[10px] text-[#9CA3AF] mt-1">{paid.when}</div>
+
+        {/* The hero pair: what you put in, what came out. The format that travels. */}
+        {stake > 0 ? (
+          <div className="mt-4 flex items-baseline justify-center gap-2.5">
+            <span className="text-2xl font-bold text-[var(--muted)] tabular-nums">{money(stake)}</span>
+            <span className="text-xl text-[#9CA3AF]">→</span>
+            <span className="text-[44px] leading-none font-extrabold tracking-tight text-[var(--green)] tabular-nums"><TickNum value={amt} /></span>
+          </div>
+        ) : (
+          <div className="text-[54px] font-extrabold tracking-tight leading-none mt-4 text-center text-[var(--green)]">+<TickNum value={amt} /></div>
+        )}
+        <div className="text-center text-[var(--muted)] text-sm mt-1">{COIN} · it&apos;s yours</div>
+        <div className="mono text-[10px] tracking-[0.25em] uppercase text-[var(--muted)] mt-3 text-center">You called it</div>
+        <div className="text-center text-base font-bold mt-1">{paid.q}</div>
+
+        <TimelineStrip calledPct={paid.calledAt != null ? paid.calledAt : null} />
+
         {/* The odds-stamp: the crowd's belief in your side the instant you locked. Low = you saw it first. */}
         {paid.calledAt != null && (
-          <div className={`mt-3 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[12px] font-bold ${contrarian ? "bg-[var(--green)]/10 text-[var(--green)]" : "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]"}`}>
+          <div className={`mt-2 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[12px] font-bold ${contrarian ? "bg-[var(--green)]/10 text-[var(--green)]" : "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]"}`}>
             <span>Called at {paid.calledAt}%</span>{paid.mult ? <><span className="opacity-40">·</span><span>paid {paid.mult.toFixed(2)}×</span></> : null}
             {contrarian && <span className="ml-1">— you saw it first</span>}
           </div>
         )}
+
+        {(settled || record) && (
+          <div className="mt-2 flex items-center justify-center gap-2 mono text-[10px] text-[#9CA3AF]">
+            {settled ? <span>{settled}</span> : null}
+            {settled && record ? <span className="opacity-40">·</span> : null}
+            {record ? <span className="font-bold text-[var(--ink)]">{record}</span> : null}
+          </div>
+        )}
+
         <div className="mt-3 rounded-xl bg-[#FAFAF7] border border-[var(--line)] p-2.5 text-center text-[12px] font-semibold">It&apos;s yours. No one can take it back.</div>
         {paid.sig && <a href={EXPLORER(paid.sig)} target="_blank" rel="noreferrer" className="block text-center mono text-[10px] text-[#9CA3AF] mt-3 underline">see the receipt ›</a>}
       </div>
@@ -1805,13 +2114,13 @@ function CallRow({ m, p, busy, claim, collect, onOpen }: any) {
   );
 }
 
-function Cash({ bal, fund, busy, markets, claim, collect, setDetail, positions = [] }: any) {
+function Cash({ bal, fund, busy, markets, claim, collect, setDetail, positions = [], econ }: any) {
   // Every position you still hold money in, joined to its pool. Winners first (you're owed now), then
   // live calls still in play; lost calls sink to the bottom. One tap collects/settles each.
   const mine = positions
     .filter((p: any) => p.amount > 0 && !p.claimed)
     .map((p: any) => ({ p, m: markets.find((x: MarketView) => x.pubkey === p.market) }))
-    .filter((x: any) => x.m);
+    .filter((x: any) => x.m && realMarket(x.m));   // never surface a pool we can't truthfully name
   const rank = (x: any) => (x.m.status === 1 && x.p.side === 1 ? 0 : x.m.status === 2 ? 1 : x.m.status === 0 ? 2 : 3);
   mine.sort((a: any, b: any) => rank(a) - rank(b));
   return (
@@ -1831,7 +2140,54 @@ function Cash({ bal, fund, busy, markets, claim, collect, setDetail, positions =
       {mine.map(({ p, m }: any) => (
         <CallRow key={m.pubkey + ":" + p.side} m={m} p={p} busy={busy} claim={claim} collect={collect} onOpen={() => setDetail?.(m)} />
       ))}
+      <BiggestWins econ={econ} />
     </div>
+  );
+}
+
+/** C6 — the biggest wins, public and pseudonymous. Every number here came off a real settled pool: the
+ * payout is the winner's own on-chain lamport delta, so nothing on this board can be staged. Names only,
+ * never addresses. This is the whale-watching feed the category runs on — with receipts. */
+function BiggestWins({ econ }: { econ: Economy | null }) {
+  const wins = econ?.biggestWins ?? [];
+  if (!wins.length) return null;
+  return (
+    <>
+      <Section title="Biggest wins" />
+      <div className="space-y-2">
+        {wins.slice(0, 6).map((w, i) => {
+          const mult = w.stake > 0 ? w.payout / w.stake : null;
+          return (
+            <div key={i} className="bg-white border border-[var(--line)] rounded-2xl p-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold truncate">{w.name}</div>
+                  {w.question ? <div className="text-[12px] text-[var(--muted)] truncate">{w.question}</div> : null}
+                </div>
+                <div className="text-right shrink-0">
+                  {w.stake > 0 ? (
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="mono text-[11px] text-[var(--muted)] tabular-nums">{fmtAmt(w.stake)}</span>
+                      <span className="text-[10px] text-[#9CA3AF]">→</span>
+                      <span className="text-lg font-extrabold text-[var(--green)] tabular-nums">{fmtAmt(w.payout)}</span>
+                    </div>
+                  ) : (
+                    <span className="text-lg font-extrabold text-[var(--green)] tabular-nums">{fmtAmt(w.payout)}</span>
+                  )}
+                  <div className="mono text-[9px] text-[#9CA3AF]">
+                    {mult ? `${mult.toFixed(2)}×` : ""}{mult && w.calledAt != null ? " · " : ""}{w.calledAt != null ? `called at ${w.calledAt}%` : ""}
+                  </div>
+                </div>
+              </div>
+              {settledAfterLabel(w.settledAfterMs) ? (
+                <div className="mt-1.5 mono text-[9px] uppercase tracking-widest text-[var(--green)]">{settledAfterLabel(w.settledAfterMs)}</div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--muted)] leading-snug">Every payout here is read straight off the chain. Nobody can stage a win on this board.</p>
+    </>
   );
 }
 
@@ -1869,7 +2225,7 @@ function SpoilerDelay() {
   );
 }
 
-function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted, toggleMute, spoiler, toggleSpoiler }: any) {
+function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted, toggleMute, spoiler, toggleSpoiler, econ, onWager, onEarnBack, econBusy }: any) {
   const rake = cfg?.rakeBps ?? 0;
   const cap = ((cfg?.maxRakeBps ?? 500) / 100).toFixed(0);
   const [pushPerm, setPushPerm] = useState<string>("default");
@@ -1899,6 +2255,9 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
   };
   const [grid, setGrid] = useState<{ cells: ("hit" | "freeze" | "miss")[]; streak: number; alivePct: number | null } | null>(null);
   useEffect(() => { if (userId) streakGridApi(userId).then(setGrid); }, [userId]);
+  // C5 — read the persisted sound preference after mount (localStorage is client-only).
+  const [stadium, setStadium] = useState(false);
+  useEffect(() => { setStadium(soundOn()); }, []);
   const name = userName && userName !== "You" ? userName : "You";
   const shareGrid = async () => {
     if (!grid) return;
@@ -1922,6 +2281,13 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
       </div>
       <div className="grid grid-cols-3 gap-2 mt-5">
         {[[streak, "DAY STREAK"], [points, "POINTS"], [fmtAmt(bal), "BALANCE"]].map(([v, k]: any, i: number) => (<div key={i} className="bg-white border border-[var(--line)] rounded-2xl p-4"><div className="text-3xl font-extrabold tabular-nums">{v}</div><div className="mono text-[9px] tracking-wide text-[#9CA3AF] mt-1">{k}</div></div>))}
+      </div>
+
+      {/* Y3 rank + weekly league, T3 the wager. Rank is lifetime-earned (spending never demotes). */}
+      <div className="mt-3 space-y-3">
+        <TierCard econ={econ} />
+        <WagerCard econ={econ} onWager={onWager} onEarnBack={onEarnBack} busy={econBusy} />
+        <LeagueTable econ={econ} name={name} />
       </div>
 
       {/* "Your Cup so far" — the shareable peak-end recap, built from real stats the fan already has. */}
@@ -1948,14 +2314,32 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
       <StartFresh />
       {/* The receipt wall — your greatest calls as artifacts (Sofascore's citation-currency lesson:
           the thing people screenshot IS the brand). */}
-      {/* Foresight record (Y1) — your running "calls landed" + boldest correct call, server-true from your
-          receipts. The record fans actually screenshot ("19-1 on my last 20 picks"). */}
-      {receipts.length > 0 && (() => {
-        const bold = receipts.filter((r: any) => r.calledAt != null).reduce((m: any, r: any) => (m == null || r.calledAt < m.calledAt ? r : m), null);
+      {/* Foresight record (Y1) — the W-L line, the boldest correct call, and the Called Shot ledger.
+          All server-derived from graded picks and settled wins: this is the record fans screenshot
+          ("19-1 on my last 20 picks"), so it must be true or it's worthless. */}
+      {(() => {
+        const f = econ?.foresight;
+        if (!f || (f.wins + f.losses + f.shotsOpened + f.shotsSealed) === 0) return null;
+        const beat = econ?.percentileToday, medal = econ?.medalToday;
         return (
           <div className="mt-6 rounded-2xl p-4 bg-[var(--green)]/10 border border-[var(--green)]/25">
-            <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Foresight</div>
-            <div className="text-[15px] font-bold mt-1">{receipts.length} call{receipts.length === 1 ? "" : "s"} landed this Cup{bold ? ` · boldest called at ${bold.calledAt}%` : ""}.</div>
+            <div className="flex items-center justify-between">
+              <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Foresight</div>
+              {medal ? <Medal tier={medal} size={16} /> : null}
+            </div>
+            {f.wins + f.losses > 0 ? (
+              <div className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-2xl font-black tabular-nums">{f.wins}–{f.losses}</span>
+                <span className="mono text-[10px] text-[var(--muted)]">this Cup</span>
+              </div>
+            ) : null}
+            {f.boldest != null ? <div className="text-[13px] font-bold mt-0.5">Boldest call landed at {f.boldest}% — the crowd said no.</div> : null}
+            {beat != null ? <div className="text-[12px] text-[var(--muted)] mt-0.5">Your calls beat {beat}% of players today.</div> : null}
+            {f.shotsOpened + f.shotsSealed > 0 ? (
+              <div className="mt-2 pt-2 border-t border-[var(--green)]/20 text-[12px] text-[var(--muted)]">
+                Called Shots · <b className="text-[var(--ink)]">{f.shotsOpened}</b> torn open · <b className="text-[var(--ink)]">{f.shotsSealed}</b> sealed forever
+              </div>
+            ) : null}
           </div>
         );
       })()}
@@ -1992,6 +2376,13 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
         <div><div className="font-bold text-[15px]">Hide money</div><div className="text-[12px] text-[var(--muted)] mt-0.5">Play for the streak — blanks all amounts on screen.</div></div>
         <button onClick={toggleMute} aria-label="Toggle hide money" className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${muted ? "bg-[var(--green)]" : "bg-[var(--line)]"}`}>
           <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${muted ? "left-6" : "left-1"}`} />
+        </button>
+      </div>
+      {/* C5 — the money sound. Off by default: an app that makes noise unasked gets muted forever. */}
+      <div className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4 flex items-center justify-between">
+        <div><div className="font-bold text-[15px]">Stadium sound</div><div className="text-[12px] text-[var(--muted)] mt-0.5">A short chime the moment a win lands. Nothing else ever makes a sound.</div></div>
+        <button onClick={() => { const next = !stadium; setStadium(next); setSoundOn(next); if (next) playPaid(); }} aria-label="Toggle stadium sound" className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${stadium ? "bg-[var(--green)]" : "bg-[var(--line)]"}`}>
+          <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${stadium ? "left-6" : "left-1"}`} />
         </button>
       </div>
       <div className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4 flex items-center justify-between">

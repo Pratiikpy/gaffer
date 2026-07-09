@@ -47,6 +47,12 @@ const IX_DISC: Record<string, number[]> = {
 export const utcDay = (ms = Date.now()) => Math.floor(ms / 86400000);
 const dayRef = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 10); // YYYY-MM-DD
 
+/** T3 Dark-Day Cover. The tournament calendar has days with no fixtures; there is nothing to play, so
+ * a run must never break on one. These are bridged for free (no freeze spent, no streak credit). */
+export const DARK_DAYS_ISO = ["2026-07-08", "2026-07-09", "2026-07-12", "2026-07-13", "2026-07-16", "2026-07-17"] as const;
+export const DARK_DAYS: number[] = DARK_DAYS_ISO.map((d) => Math.floor(Date.parse(d + "T00:00:00Z") / 86400000));
+export const isDarkDay = (day: number) => DARK_DAYS.includes(day);
+
 /** Insert one idempotent grant. Returns true if it was newly applied (false = already granted). */
 async function insertGrant(userId: string, kind: GrantKind, ref: string, squadCode?: string | null): Promise<boolean> {
   if (!userId) return false;
@@ -78,7 +84,7 @@ export async function ensureUserToken(userId: string): Promise<{ token: string; 
   const now = Date.now();
   const token = crypto.randomBytes(18).toString("base64url");
   const rows = await db()`
-    INSERT INTO user_state (user_id, freezes, created_at, token) VALUES (${userId}, 3, ${now}, ${token})
+    INSERT INTO user_state (user_id, freezes, created_at, token) VALUES (${userId}, 2, ${now}, ${token})
     ON CONFLICT (user_id) DO UPDATE SET token = COALESCE(user_state.token, EXCLUDED.token)
     RETURNING token, (xmax = 0) AS inserted`;
   const stored = rows[0]?.token as string;
@@ -168,7 +174,7 @@ export async function grantWinVerified(userId: string, sig: string, squadCode?: 
 export async function touchActivityAndStreak(userId: string): Promise<{ streak: number; freezes: number }> {
   if (!userId) return { streak: 0, freezes: 0 };
   const today = utcDay();
-  await db()`INSERT INTO user_state (user_id, freezes, created_at) VALUES (${userId}, 3, ${Date.now()}) ON CONFLICT (user_id) DO NOTHING`;
+  await db()`INSERT INTO user_state (user_id, freezes, created_at) VALUES (${userId}, 2, ${Date.now()}) ON CONFLICT (user_id) DO NOTHING`;
   await db()`INSERT INTO activity_days (user_id, day) VALUES (${userId}, ${today}) ON CONFLICT DO NOTHING`;
   return computeStreak(userId);
 }
@@ -187,11 +193,13 @@ export async function streakGrid(userId: string, span = 14): Promise<{ cells: ("
   // Replay the SAME corrected walk to find exactly which gap days a freeze bridged (🧊) — a freeze
   // is never spent past the earliest active day, so pre-history renders as ⬜ not 🧊.
   const bridged = new Set<number>();
-  if (active.size > 0 && (active.has(today) || active.has(today - 1))) {
+  const open = (d: number) => active.has(d) || isDarkDay(d);
+  if (active.size > 0 && (open(today) || open(today - 1))) {
     const earliest = Math.min(...active);
-    let cursor = active.has(today) ? today : today - 1, spent = 0;
+    let cursor = open(today) ? today : today - 1, spent = 0;
     while (cursor >= earliest) {
       if (active.has(cursor)) cursor--;
+      else if (isDarkDay(cursor)) { bridged.add(cursor); cursor--; }        // free Dark-Day Cover
       else if (cursor > earliest && spent < budget) { bridged.add(cursor); spent++; cursor--; }
       else break;
     }
@@ -216,11 +224,15 @@ export async function computeStreak(userId: string): Promise<{ streak: number; f
   const days = new Set(rows.map((r: any) => Number(r.day)));
   const st = await db()`SELECT freezes FROM user_state WHERE user_id = ${userId}`;
   const freezes = Number(st[0]?.freezes ?? 0);
-  if (days.size === 0 || (!days.has(today) && !days.has(today - 1))) return { streak: 0, freezes }; // run broken
+  // T3 Dark-Day Cover: on a day the tournament gives no fixtures there is nothing to miss, so those
+  // days are bridged for free — before any freeze is considered, and never counted as a streak day.
+  const open = (d: number) => days.has(d) || isDarkDay(d);
+  if (days.size === 0 || (!open(today) && !open(today - 1))) return { streak: 0, freezes }; // run broken
   const earliest = Math.min(...days);
-  let streak = 0, cursor = days.has(today) ? today : today - 1, spent = 0;
+  let streak = 0, cursor = open(today) ? today : today - 1, spent = 0;
   while (cursor >= earliest) {
     if (days.has(cursor)) { streak++; cursor--; }
+    else if (isDarkDay(cursor)) { cursor--; }                                 // free cover, no streak credit
     else if (cursor > earliest && freezes - spent > 0) { spent++; cursor--; } // bridge a real gap only
     else break;
   }

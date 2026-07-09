@@ -39,7 +39,35 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ points, streak: s.streak, freezes: s.freezes });
       }
       case "stake": granted = await grantStakeVerified(userId, b.sig, squadCode); break;
-      case "win": granted = await grantWinVerified(userId, b.sig, squadCode); break;
+      case "win": {
+        granted = await grantWinVerified(userId, b.sig, squadCode);
+        // C6/C1 — bank the win for the public feed and the receipt. Payout comes off the CHAIN
+        // (the claimer's own lamport delta), so the brag can never be inflated by the client.
+        let settledAfterMs: number | null = null, calledAt: number | null = null;
+        if (granted) {
+          const { Connection } = await import("@solana/web3.js");
+          const { RPC } = await import("@/lib/config");
+          const { recordWinFromChain, getSettle, settleStatUsable, getStamp } = await import("@/lib/economy");
+          const market = String(b.market || "");
+          await recordWinFromChain({
+            conn: new Connection(RPC, "confirmed"),
+            userId, sig: b.sig,
+            name: String(b.name || "").slice(0, 40),
+            question: String(b.question || "").slice(0, 120),
+            market,
+            stakeLamports: Math.max(0, Math.round(Number(b.stakeLamports) || 0)),
+          }).catch(() => null);
+          if (market) {
+            const se = await getSettle(market).catch(() => null);
+            if (se && settleStatUsable(se.settledAfterMs)) settledAfterMs = se.settledAfterMs;
+            // The stamp on the receipt is the SERVER's, not the browser's — localStorage can be cleared,
+            // spoofed, or simply absent on another device. The stamp is the whole point of the brag.
+            const st = await getStamp(userId, market).catch(() => null);
+            if (st) calledAt = st.calledAt;
+          }
+        }
+        return NextResponse.json({ points: await pointsTotal(userId), granted, settledAfterMs, calledAt });
+      }
       case "share": granted = await grantShare(userId); break;
       default: return NextResponse.json({ error: "bad action" }, { status: 400 });
     }

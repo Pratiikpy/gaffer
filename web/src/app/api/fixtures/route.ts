@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { txline } from "@/lib/txline";
+import { rememberFixtures } from "@/lib/fixtureNames";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,9 @@ export async function GET() {
         return { fixtureId: Number(f.FixtureId), home: f.Participant1, away: f.Participant2, homeTeam: home, awayTeam: away, competition: f.Competition, startTime: start, state };
       }).sort((a: any, b: any) => a.startTime - b.startTime);
       cache = { at: now, v: list };
+      // Remember these names forever: pools outlive the slate, and a money card must never say
+      // "Home v Away". Fire-and-forget — a naming cache must never break the schedule.
+      rememberFixtures(list).catch(() => {});
     }
     return NextResponse.json({ fixtures: cache.v });
   } catch {

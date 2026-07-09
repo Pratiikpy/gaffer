@@ -145,10 +145,28 @@ export async function settleRound(roundId: string): Promise<RoundView | null> {
   }
   await db()`UPDATE rounds SET state = 'settled', outcome = ${outcome}, lore = ${lore} WHERE id = ${roundId}`;
   const calls = await db()`SELECT user_id, side FROM round_calls WHERE round_id = ${roundId}`;
+  let right = 0;
   for (const c of calls as any[]) {
     const correct = c.side === outcome;
     await db()`UPDATE round_calls SET correct = ${correct} WHERE round_id = ${roundId} AND user_id = ${c.user_id}`;
-    if (correct) await grantFrozenWin(c.user_id, roundId);
+    if (correct) { right++; await grantFrozenWin(c.user_id, roundId); }
+  }
+
+  // Q2 — name the moment the way the squad will tell it later, and pin it to the wall. Built from what
+  // actually happened (the minute, the kind of window, whether the room read it), never a generic line.
+  if (r.squad_code) {
+    try {
+      const { nameMoment, pinLore } = await import("./squadPlus");
+      const state = await import("./live").then((m) => m.liveState(Number(r.fixture_id))).catch(() => null);
+      const minute = state?.clockSeconds != null && state.clockSeconds > 0 ? Math.floor(state.clockSeconds / 60) : null;
+      const roomRight = calls.length ? right > calls.length / 2 : null;
+      const { title, detail } = nameMoment({ kind: r.kind, minute, roomRight, note: lore });
+      await pinLore(r.squad_code, roundId, title, detail, minute);
+
+      // Q4 — the reveal lands on every member's screen at the same instant, paced, not a silent ticker.
+      const { pushSquad } = await import("./push");
+      await pushSquad(r.squad_code, { title, body: detail, url: "/", tag: `lore:${roundId}` }).catch(() => {});
+    } catch { /* lore and the buzz are decoration; a settle must never fail because of them */ }
   }
   return getRound(roundId);
 }

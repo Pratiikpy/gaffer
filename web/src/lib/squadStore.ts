@@ -9,13 +9,14 @@ import * as crypto from "crypto";
 import { db } from "./db";
 import { grantNewAccount, grantSquadJoin } from "./points";
 
-export type Member = { id: string; name: string; nation: string; points: number; streak: number; joinedAt: number };
+export type Member = { id: string; name: string; nation: string; points: number; streak: number; joinedAt: number; proxyOk?: boolean };
 export type FeedItem = {
   id: string; ts: number; userId: string; name: string;
   kind: "msg" | "call" | "win" | "system" | "shot";
   text: string; market?: string; side?: number; q?: string;
   reactions: Record<string, string[]>;
   sealed?: string | null; revealed?: boolean; shotWin?: boolean | null;
+  reason?: string;   // S5 — why the call was made
 };
 export type PubSquad = { code: string; name: string; createdAt: number; ownerId: string; members: Record<string, Member>; feed: FeedItem[] };
 
@@ -47,22 +48,24 @@ async function readSquad(code: string): Promise<PubSquad | null> {
   const sq = await db()`SELECT code, name, owner_id, created_at FROM squads WHERE code = ${c}`;
   if (sq.length === 0) return null;
   const mrows = await db()`
-    SELECT m.user_id, m.name, m.nation, m.streak, m.joined_at, COALESCE(p.total, 0)::int AS points
+    SELECT m.user_id, m.name, m.nation, m.streak, m.joined_at, m.proxy_ok, COALESCE(p.total, 0)::int AS points
     FROM members m
     LEFT JOIN LATERAL (SELECT SUM(amount) AS total FROM points_events e WHERE e.user_id = m.user_id) p ON TRUE
     WHERE m.squad_code = ${c}`;
   const frows = await db()`
-    SELECT id, ts, user_id, name, kind, text, market, side, q, reactions, sealed, revealed, shot_win
+    SELECT id, ts, user_id, name, kind, text, market, side, q, reactions, sealed, revealed, shot_win, reason
     FROM feed WHERE squad_code = ${c} ORDER BY ts ASC LIMIT 120`;
   const members: Record<string, Member> = {};
   for (const m of mrows as any[]) members[m.user_id] = {
     id: m.user_id, name: m.name, nation: m.nation, points: Number(m.points), streak: Number(m.streak), joinedAt: Number(m.joined_at),
+    proxyOk: !!m.proxy_ok,
   };
   const feed: FeedItem[] = (frows as any[]).map((f) => ({
     id: f.id, ts: Number(f.ts), userId: f.user_id, name: f.name, kind: f.kind, text: f.text,
     market: f.market ?? undefined, side: f.side ?? undefined, q: f.q ?? undefined,
     reactions: f.reactions || {},
     sealed: f.sealed ?? undefined, revealed: f.revealed ?? undefined, shotWin: f.shot_win,
+    reason: f.reason ?? undefined,   // S5 — the written reason, so Copy-a-Call is never blind
   }));
   return { code: sq[0].code, name: sq[0].name, ownerId: sq[0].owner_id, createdAt: Number(sq[0].created_at), members, feed };
 }
@@ -121,10 +124,11 @@ export async function postMessage(code: string, userId: string, name: string, te
   return readSquad(c);
 }
 
-export async function recordCall(code: string, userId: string, name: string, market: string, side: number, q: string, sealed?: string): Promise<PubSquad | null> {
+export async function recordCall(code: string, userId: string, name: string, market: string, side: number, q: string, sealed?: string, reason?: string): Promise<PubSquad | null> {
   const c = code?.toUpperCase();
   const kind = sealed ? "shot" : "call";
-  await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text, market, side, q, sealed) VALUES (${uid()}, ${c}, ${Date.now()}, ${cleanId(userId)}, ${clamp(name, 24)}, ${kind}, '', ${cleanMarket(market)}, ${cleanSide(side)}, ${clamp(q || "", 80)}, ${sealed ? clamp(sealed, 140) : null})`;
+  // `reason` (S5) is the one line explaining WHY — it rides with the call so Copy-a-Call is never blind.
+  await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text, market, side, q, sealed, reason) VALUES (${uid()}, ${c}, ${Date.now()}, ${cleanId(userId)}, ${clamp(name, 24)}, ${kind}, '', ${cleanMarket(market)}, ${cleanSide(side)}, ${clamp(q || "", 80)}, ${sealed ? clamp(sealed, 140) : null}, ${reason ? clamp(reason, 120) : null})`;
   return readSquad(c);
 }
 

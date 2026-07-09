@@ -21,8 +21,10 @@ export async function squad(action: string, payload: Record<string, unknown>): P
   const r = await fetch("/api/squad", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
   return await r.json();
 }
-export async function squadGet(code: string): Promise<any> {
-  const r = await fetch(`/api/squad/${code}`, { cache: "no-store" });
+/** The squad, plus commissioner settings, the lore wall, and (when `user` is given) that fan's duels. */
+export async function squadGet(code: string, user?: string): Promise<any> {
+  const q = user ? `?user=${encodeURIComponent(user)}` : "";
+  const r = await fetch(`/api/squad/${code}${q}`, { cache: "no-store" });
   return r.ok ? await r.json() : null;
 }
 /** Server-authoritative points. `action` = free_pick | stake | win | share; the server decides the

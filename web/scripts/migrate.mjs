@@ -17,6 +17,31 @@ const statements = [
   // T6 — the late-join promise: entering the knockout board is a first-class, recorded act.
   `ALTER TABLE user_state ADD COLUMN IF NOT EXISTS knockout_entry bigint`,
 
+  // Q9 — commissioner tools. The organizer is the real customer: give them the controls and they bring
+  // the other fourteen. Pick visibility is theirs to set; the prize note is theirs to write.
+  `ALTER TABLE squads ADD COLUMN IF NOT EXISTS prize_note text`,
+  // picks_visible: 'always' | 'after_lock'
+  `ALTER TABLE squads ADD COLUMN IF NOT EXISTS picks_visible text NOT NULL DEFAULT 'always'`,
+  `ALTER TABLE squads ADD COLUMN IF NOT EXISTS is_nation_room boolean NOT NULL DEFAULT false`,
+  // Q9 proxy picks: a member the commissioner may call on behalf of ("my grandparents play").
+  `ALTER TABLE members ADD COLUMN IF NOT EXISTS proxy_ok boolean NOT NULL DEFAULT false`,
+
+  // S5 — a call can carry the reason it was made. Copy-a-Call is never a blind clone.
+  `ALTER TABLE feed ADD COLUMN IF NOT EXISTS reason text`,
+
+  // Q2 — the lore wall. A moment is auto-named when it settles, and pinned forever.
+  `CREATE TABLE IF NOT EXISTS lore (
+     id bigserial PRIMARY KEY,
+     squad_code text NOT NULL,
+     round_id text,
+     title text NOT NULL,
+     detail text NOT NULL DEFAULT '',
+     minute int,
+     ts bigint NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS lore_squad_idx ON lore (squad_code)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS lore_round_unique ON lore (round_id) WHERE round_id IS NOT NULL`,
+
   // T3 — Streak Wager: stake points that a run survives N matchdays.
   `CREATE TABLE IF NOT EXISTS streak_wager (
      user_id text PRIMARY KEY,

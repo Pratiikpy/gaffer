@@ -295,11 +295,38 @@ export default function GafferApp() {
   // The per-user token guards every points grant (so no one can mint points for another id).
   const pTok = () => (typeof window !== "undefined" ? localStorage.getItem("gaffer_ptoken") || "" : "");
 
+  // The squad fetch carries everything the room needs: members + feed, the commissioner's settings (Q9),
+  // the auto-named lore wall (Q2), and this fan's Fade Duels with their standing H2H (S6).
+  const [duels, setDuels] = useState<any[]>([]);
+  const [squadSettings, setSquadSettings] = useState<any>(null);
+  const [lore, setLore] = useState<any[]>([]);
   const refreshSquad = useCallback(async () => {
     if (!squadCode) return;
-    const r = await squadGet(squadCode);
+    const r = await squadGet(squadCode, userId);
     if (r?.squad) setSquadData(r.squad);
-  }, [squadCode]);
+    if (r?.duels) setDuels(r.duels);
+    if (r?.settings) setSquadSettings(r.settings);
+    if (r?.lore) setLore(r.lore);
+  }, [squadCode, userId]);
+
+  /** Fade a mate: take the other side of their call and open a duel that they can see too. */
+  const onFade = useCallback(async (f: any) => {
+    const mySide = f.side === 1 ? 2 : 1;
+    copyCall(f.market, mySide);            // the slip opens on the OPPOSITE side — you think they're wrong
+    const r = await squadApi("duel", {
+      code: squadCode, userId, token: sqTok(), name: userName, side: mySide,
+      targetId: f.userId, targetName: f.name, targetSide: f.side, market: f.market, q: f.q,
+    });
+    if (r?.duels) { setDuels(r.duels); flash(`Fade duel with ${f.name} — you're on the other side`); }
+    else flash(r?.error || `You're already duelling ${f.name} on this one`, "err");
+  }, [squadCode, userId, userName]);
+
+  /** Commissioner actions (Q9). The server re-checks ownership; this only shapes the UI. */
+  const onCommish = useCallback(async (action: "kick" | "proxy" | "visibility" | "prize", payload: Record<string, unknown>) => {
+    const r = await squadApi(action, { code: squadCode, userId, token: sqTok(), ...payload });
+    if (r?.ok) { setSquadSettings(r.settings ?? squadSettings); await refreshSquad(); flash("Done."); }
+    else flash(r?.error || "That didn't go through.", "err");
+  }, [squadCode, userId, squadSettings, refreshSquad]);
   useEffect(() => {
     if (!squadCode) { setSquadData(null); return; }
     refreshSquad();
@@ -551,7 +578,7 @@ export default function GafferApp() {
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
         {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
-        {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} />}
+        {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
         {tab === "you" && <You streak={streak} bal={bal} points={points} nation={nation} userName={userName} userId={userId} flash={flash} cfg={cfg} muted={MONEY_MUTED} toggleMute={toggleMute} spoiler={SPOILER_SAFE} toggleSpoiler={toggleSpoiler} econ={econ} onWager={onWager} onEarnBack={onEarnBack} econBusy={econBusy} />}
@@ -1688,7 +1715,77 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
   );
 }
 
-function Squad({ userId, userName, setName, nation, setNation, squadCode, squadData, createMySquad, joinByCode, postBanter, reactTo, copyCall, leaveSquad, pendingJoin, flash }: any) {
+/** Q9 — the commissioner's controls. The organizer is the real customer: the person who drags fourteen
+ * mates in and then has to run the thing. Give them the four controls every pool thread begs for —
+ * remove someone, call on behalf of a member who can't, hide picks until lock, and pin the stakes. */
+function CommissionerPanel({ settings, members, userId, onCommish }: any) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState<string>(settings.prizeNote || "");
+  // `members` is a map keyed by user id, not an array.
+  const others = Object.values(members || {}).filter((m: any) => m.id !== userId);
+  const afterLock = settings.picksVisible === "after_lock";
+
+  return (
+    <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">You run this squad</span>
+        <span className="mono text-[10px] font-bold text-[var(--green)]">{open ? "close" : "manage"}</span>
+      </button>
+
+      {settings.prizeNote && !open && <div className="mt-1 text-sm font-bold">Playing for: {settings.prizeNote}</div>}
+
+      {open && (
+        <div className="mt-3 space-y-4">
+          <div>
+            <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF] mb-1.5">What are you playing for?</div>
+            <div className="flex gap-2">
+              <input value={note} onChange={(e) => setNote(e.target.value.slice(0, 140))} placeholder="Loser buys the curry."
+                className="flex-1 h-10 rounded-xl border border-[var(--line)] px-3 bg-[#FAFAF7] text-sm" />
+              <button onClick={() => onCommish("prize", { note })} className="px-3 h-10 rounded-xl bg-[var(--ink)] text-white text-sm font-bold">Pin</button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="pr-3">
+              <div className="font-bold text-[14px]">Hide picks until lock</div>
+              <div className="text-[12px] text-[var(--muted)]">Nobody can copy a call before the cut-off.</div>
+            </div>
+            <button onClick={() => onCommish("visibility", { mode: afterLock ? "always" : "after_lock" })}
+              aria-label="Toggle pick visibility"
+              className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${afterLock ? "bg-[var(--green)]" : "bg-[var(--line)]"}`}>
+              <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${afterLock ? "left-6" : "left-1"}`} />
+            </button>
+          </div>
+
+          {others.length > 0 && (
+            <div>
+              <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF] mb-1.5">Members</div>
+              <div className="space-y-1.5">
+                {others.map((m: any) => {
+                  const id = m.id;
+                  return (
+                    <div key={id} className="flex items-center gap-2">
+                      <span className="flex-1 text-sm font-semibold truncate">{m.name}</span>
+                      <button onClick={() => onCommish("proxy", { targetId: id, allow: !m.proxyOk })}
+                        className={`mono text-[10px] font-bold px-2 py-1.5 rounded-lg border ${m.proxyOk ? "border-[var(--green)] text-[var(--green)]" : "border-[var(--line)] text-[var(--muted)]"}`}>
+                        {m.proxyOk ? "PROXY ON" : "PROXY"}
+                      </button>
+                      <button onClick={() => onCommish("kick", { targetId: id })}
+                        className="mono text-[10px] font-bold px-2 py-1.5 rounded-lg border border-[var(--line)] text-[var(--muted)]">REMOVE</button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-[var(--muted)] mt-2 leading-snug">Proxy lets you make a call for someone who can&apos;t — a grandparent, a mate with no phone.</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Squad({ userId, userName, setName, nation, setNation, squadCode, squadData, createMySquad, joinByCode, postBanter, reactTo, copyCall, leaveSquad, pendingJoin, flash, duels = [], squadSettings, lore = [], onFade, onCommish }: any) {
   const [view, setView] = useState<"squad" | "nations">("squad");
   const [sqName, setSqName] = useState("");
   const [code, setCode] = useState(pendingJoin || "");
@@ -1697,17 +1794,9 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
   const [nations, setNations] = useState<{ name: string; flag: string; pts: number; fans: number }[]>([]);
   // The Adoption (N2): a second nation you back — worn as an origin chip. 66% of fans root for 2+ teams.
   const [adopted, setAdopted] = useState<string>(() => (typeof window !== "undefined" ? localStorage.getItem("gaffer_adopted") || "" : ""));
-  // Fade Duels (S6): fading a mate's call puts you on the other side and starts a named, persistent H2H
-  // ("You lead Sam 1–0"). The W/L fills in as duels settle; the duel itself is created the moment you fade.
-  const [duels, setDuels] = useState<any[]>(() => { try { return JSON.parse(localStorage.getItem("gaffer_duels") || "[]"); } catch { return []; } });
-  const fadeDuel = (f: any) => {
-    const mySide = f.side === 1 ? 2 : 1;
-    const d = { opp: f.name, q: f.q, mySide, at: Date.now() };
-    const all = [d, ...duels].slice(0, 8);
-    setDuels(all); try { localStorage.setItem("gaffer_duels", JSON.stringify(all)); } catch { /* private */ }
-    copyCall(f.market, mySide); // opens the slip on the OPPOSITE side — you're betting they're wrong
-    flash(`Fade duel with ${f.name} — you're on the other side`);
-  };
+  // Fade Duels (S6) now live on the SERVER — the person you fade sees the same duel, and it settles off
+  // the pool's real result. `duels`, `settings` and `lore` arrive as props from the squad fetch.
+  const fadeDuel = (f: any) => onFade?.(f);
   const adopt = (n: string) => { const v = n === adopted ? "" : n; setAdopted(v); if (typeof window !== "undefined") localStorage.setItem("gaffer_adopted", v); flash(v ? `Adopted ${v} — worn to the final` : "Dropped your second nation"); };
   useEffect(() => { if (pendingJoin) setCode(pendingJoin); }, [pendingJoin]);
   useEffect(() => { if (view === "nations") getNations().then(setNations); }, [view]);
@@ -1830,19 +1919,68 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
         );
       })()}
 
-      {duels.length > 0 && (
+      {/* Q2 — the lore wall: moments auto-named from what actually happened, pinned forever. */}
+      {lore.length > 0 && (
         <>
-          <Section title="Your duels" />
+          <Section title="The wall" />
           <div className="space-y-1.5">
-            {duels.map((d: any, i: number) => (
-              <div key={i} className="flex items-center gap-2 bg-white border border-[var(--line)] rounded-xl px-3.5 py-2.5">
-                <span className="mono text-[9px] font-bold tracking-widest text-white bg-[var(--ink)] rounded px-1.5 py-1">H2H</span>
-                <span className="flex-1 text-sm font-semibold">You vs {d.opp}</span>
-                <span className="text-[12px] text-[var(--muted)]">{d.q}? · you faded</span>
+            {lore.slice(0, 5).map((l: any, i: number) => (
+              <div key={i} className="bg-white border border-[var(--line)] rounded-xl px-3.5 py-2.5">
+                <div className="text-sm font-black">{l.title}</div>
+                <div className="text-[12px] text-[var(--muted)] mt-0.5">{l.detail}</div>
               </div>
             ))}
           </div>
         </>
+      )}
+
+      {/* S6 — duels, with the standing head-to-head. Settled off the pool, so the record is true. */}
+      {duels.length > 0 && (
+        <>
+          <Section title="Your duels" />
+          <div className="space-y-1.5">
+            {duels.map((d: any) => {
+              const lead = d.record.mine > d.record.theirs ? "You lead" : d.record.mine < d.record.theirs ? `${d.them.name} leads` : "All square";
+              const score = `${Math.max(d.record.mine, d.record.theirs)}–${Math.min(d.record.mine, d.record.theirs)}`;
+              const won = d.status === "settled" && d.winner === d.me.userId;
+              const lost = d.status === "settled" && d.winner === d.them.userId;
+              return (
+                <div key={d.id} className="bg-white border border-[var(--line)] rounded-xl px-3.5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="mono text-[9px] font-bold tracking-widest text-white bg-[var(--ink)] rounded px-1.5 py-1">H2H</span>
+                    <span className="flex-1 text-sm font-semibold truncate">You vs {d.them.name}</span>
+                    {d.status === "settled" ? (
+                      <span className={`mono text-[9px] font-extrabold tracking-widest rounded px-2 py-1 ${won ? "bg-[var(--green)] text-white" : "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]"}`}>
+                        {won ? "WON" : lost ? "LOST" : "VOID"}
+                      </span>
+                    ) : (
+                      <span className="mono text-[9px] font-extrabold tracking-widest rounded px-2 py-1 bg-[#D8A32B] text-white">LIVE</span>
+                    )}
+                  </div>
+                  <div className="text-[12px] text-[var(--muted)] mt-1 truncate">{d.question}</div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="mono text-[10px] text-[var(--muted)]">{score === "0–0" ? "First blood" : `${lead} ${score}`}</span>
+                    {d.status === "settled" && (
+                      <button onClick={() => copyCall(d.market, d.me.side)} className="mono text-[10px] font-bold text-[var(--green)]">REMATCH →</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Q9 — the commissioner's controls. Only the owner sees them; the server re-checks regardless. */}
+      {squadSettings && squadSettings.ownerId === userId && (
+        <CommissionerPanel settings={squadSettings} members={squadData?.members || []} userId={userId} onCommish={onCommish} />
+      )}
+      {/* Everyone else just sees what the squad is playing for. */}
+      {squadSettings?.prizeNote && squadSettings.ownerId !== userId && (
+        <div className="mt-4 rounded-2xl p-3.5 bg-[var(--green)]/10 border border-[var(--green)]/25">
+          <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Playing for</div>
+          <div className="text-sm font-bold mt-0.5">{squadSettings.prizeNote}</div>
+        </div>
       )}
 
       <div className="flex items-center justify-between mt-6 mb-2"><div className="mono text-[10px] tracking-widest uppercase text-[#9CA3AF]">Group feed</div><button onClick={leaveSquad} className="mono text-[10px] text-[var(--muted)] underline">leave</button></div>

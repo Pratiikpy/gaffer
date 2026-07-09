@@ -8,6 +8,7 @@ import { loadServerKeypair } from "@/lib/serverConfig";
 import { txline } from "@/lib/txline";
 import { prettyErr } from "@/lib/errcopy";
 import { recordSettle } from "@/lib/economy";
+import { settleDuelsForMarket } from "@/lib/squadPlus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +63,9 @@ export async function POST(req: NextRequest) {
       // C1 — how fast we paid, measured from the proof's own last match timestamp (not a guess).
       const matchTs = Number(bundle.summary.updateStats.maxTimestamp) || 0;
       await recordSettle(market, fixtureId, matchTs, Math.max(0, Date.now() - matchTs)).catch(() => {});
+      // S6 — every Fade Duel on this pool settles off the pool's own result. `settle` only ever
+      // resolves YES (a predicate that held), so YES (side 1) takes the duel.
+      await settleDuelsForMarket(market, 1).catch(() => {});
       return NextResponse.json({ settled: true, sig, provenValue: bundle.statToProve.value });
     } catch (e: any) {
       return NextResponse.json({ settled: false, reason: prettyErr(e, "neutral"), code: e.error?.errorCode?.code || "" });

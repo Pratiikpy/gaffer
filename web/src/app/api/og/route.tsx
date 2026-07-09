@@ -14,7 +14,16 @@ export function GET(req: Request) {
   const called = p.get("called");
   const mult = p.get("mult");
   const isReceipt = !!amount;
-  const stamp = called ? `Called at ${called}%${mult ? `  ·  paid ${mult}×` : ""}` : "";
+  // N3 — the card speaks Spanish when asked (?lang=es). Mexico is half this market.
+  const es = (p.get("lang") || "").toLowerCase().startsWith("es");
+  const stamp = called
+    ? es
+      ? `Lo canté al ${called}%${mult ? `  ·  pagó ${mult}×` : ""}`
+      : `Called at ${called}%${mult ? `  ·  paid ${mult}×` : ""}`
+    : "";
+  const L = es
+    ? { line1: "Cántalo.", line2: "Cobra en el segundo", line3: "en que pasa.", sub: "Sin casa de apuestas. Nadie puede anular tu premio.", won: "Lo canté" }
+    : { line1: "Call it.", line2: "Get paid the second", line3: "it happens.", sub: "No bookie. No house. No one who can void your win.", won: "You called it" };
 
   return new ImageResponse(
     (
@@ -42,13 +51,13 @@ export function GET(req: Request) {
                 <div style={{ display: "flex", fontSize: "28px", fontWeight: 700, background: "rgba(255,255,255,0.12)", padding: "12px 24px", borderRadius: "999px" }}>{stamp}</div>
               </div>
             ) : null}
-            <div style={{ display: "flex", fontSize: "24px", color: "rgba(255,255,255,0.55)", marginTop: "28px" }}>Paid the second it happened — and we can prove it.</div>
+            <div style={{ display: "flex", fontSize: "24px", color: "rgba(255,255,255,0.55)", marginTop: "28px" }}>{es ? "Pagado en el segundo en que pasó — y podemos probarlo." : "Paid the second it happened — and we can prove it."}</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", marginTop: "44px" }}>
-            <div style={{ display: "flex", fontSize: "84px", fontWeight: 800, letterSpacing: "-3px" }}>Call it.</div>
-            <div style={{ display: "flex", fontSize: "84px", fontWeight: 800, letterSpacing: "-3px", lineHeight: 1.05 }}>Get paid the second it happens.</div>
-            <div style={{ display: "flex", fontSize: "34px", color: "rgba(255,255,255,0.7)", marginTop: "30px", maxWidth: "1000px" }}>The World Cup game you already play in the group chat — now real, and it settles itself.</div>
+            <div style={{ display: "flex", fontSize: "84px", fontWeight: 800, letterSpacing: "-3px" }}>{L.line1}</div>
+            <div style={{ display: "flex", fontSize: "84px", fontWeight: 800, letterSpacing: "-3px", lineHeight: 1.05 }}>{`${L.line2} ${L.line3}`}</div>
+            <div style={{ display: "flex", fontSize: "34px", color: "rgba(255,255,255,0.7)", marginTop: "30px", maxWidth: "1000px" }}>{es ? "El juego del Mundial que ya juegas en el grupo — ahora de verdad, y se liquida solo." : "The World Cup game you already play in the group chat — now real, and it settles itself."}</div>
           </div>
         )}
       </div>

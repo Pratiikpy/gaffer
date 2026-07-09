@@ -1,5 +1,6 @@
 "use client";
 import type { MarketView } from "./kernel";
+import { detectLang, shareStreak } from "./i18n";
 
 export async function getMarkets(): Promise<MarketView[]> {
   const r = await fetch("/api/markets", { cache: "no-store" });

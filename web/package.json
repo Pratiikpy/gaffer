@@ -12,12 +12,14 @@
     "migrate": "node scripts/migrate.mjs",
     "test:economy": "node scripts/test-economy.mjs",
     "test:live": "node scripts/test-live.mjs",
-    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs",
+    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs && node scripts/test-shells.mjs",
     "test:squad": "node scripts/test-squad.mjs",
-    "test:draft": "node scripts/test-draft.mjs"
+    "test:draft": "node scripts/test-draft.mjs",
+    "test:shells": "node scripts/test-shells.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@farcaster/miniapp-sdk": "^0.3.0",
     "@neondatabase/serverless": "^1.1.0",
     "@privy-io/react-auth": "^3.32.2",
     "@solana-program/memo": "^0.8.0",

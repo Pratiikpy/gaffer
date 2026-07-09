@@ -5,6 +5,7 @@ import { BrowserParlay } from "@/lib/parlayClient";
 import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
+import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
 import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList } from "@/lib/api";
@@ -1683,11 +1684,18 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
   const record = rec && rec.wins + rec.losses > 0 ? `${rec.wins}–${rec.losses} this Cup` : null;
 
   const share = async () => {
-    const pair = stake > 0 ? `${money(stake)} → ${money(paid.amount)}. ` : "";
-    const stamp = paid.calledAt != null ? `Called it at ${paid.calledAt}%${paid.mult ? ` — paid ${paid.mult.toFixed(2)}×` : ""}. ` : "";
-    const fast = settled ? `${settled[0].toUpperCase()}${settled.slice(1)}. ` : "";
-    const rc = record ? `${record}. ` : "";
-    const text = `I called it on GAFFER — ${pair}"${paid.q}". ${stamp}${fast}${rc}Paid the second it happened. 🟢 gaffer-cyan.vercel.app`;
+    // N3 — the card speaks the reader's language. Mexico is half this market.
+    const lang = detectLang();
+    const text = shareWin(lang, {
+      stake: stake > 0 ? stake : undefined,
+      payout: paid.amount,
+      question: paid.q,
+      calledAt: paid.calledAt ?? null,
+      mult: paid.mult ?? null,
+      settled: settled ? settled.replace(/^settled /, "") : null,
+      record: rec && rec.wins + rec.losses > 0 ? { w: rec.wins, l: rec.losses } : null,
+      url: "gaffer-cyan.vercel.app",
+    });
     try {
       if ((navigator as any).share) await (navigator as any).share({ text });
       else { await navigator.clipboard.writeText(text); flash?.("Receipt copied — paste it in the chat"); }

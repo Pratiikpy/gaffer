@@ -111,7 +111,9 @@ export async function joinSquad(code: string, m: Partial<Member>): Promise<{ squ
     RETURNING token, (xmax = 0) AS inserted`;
   const isNew = ins[0]?.inserted === true;
   if (isNew) {
-    await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text) VALUES (${uid()}, ${c}, ${Date.now()}, 'system', '', 'system', ${nm + " joined"})`;
+    // Q3 — the arrival beat. Partiful's guest-list effect: seeing a name land is what convinces the
+    // next person. It reads as an event, not a log line, and it carries who they're backing.
+    await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text) VALUES (${uid()}, ${c}, ${Date.now()}, 'system', '', 'system', ${`${nm} is in — backing ${nation}`})`;
     await grantNewAccount(id); await grantSquadJoin(id, c);
   }
   return { squad: (await readSquad(c))!, token: ins[0].token };

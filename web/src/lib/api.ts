@@ -22,6 +22,12 @@ export async function squad(action: string, payload: Record<string, unknown>): P
   const r = await fetch("/api/squad", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
   return await r.json();
 }
+/** Q6 — land in your nation's public room when you have no mates to invite. */
+export async function joinNationRoom(nation: string, member: Record<string, unknown>): Promise<any> {
+  const r = await fetch("/api/nations/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nation, member }) });
+  return r.ok ? await r.json() : null;
+}
+
 /** The squad, plus commissioner settings, the lore wall, and (when `user` is given) that fan's duels. */
 export async function squadGet(code: string, user?: string): Promise<any> {
   const q = user ? `?user=${encodeURIComponent(user)}` : "";

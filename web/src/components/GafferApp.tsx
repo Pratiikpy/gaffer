@@ -9,7 +9,7 @@ import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
 import { canInstall, onInstallable, promptInstall, isIOS, isStandalone, setBadge } from "@/lib/install";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
-import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList } from "@/lib/api";
+import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList, joinNationRoom } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
@@ -140,7 +140,7 @@ export default function GafferApp() {
   const [squadCode, setSquadCode] = useState("");
   const [squadData, setSquadData] = useState<any>(null);
   const [pendingJoin, setPendingJoin] = useState("");
-  const [slip, setSlip] = useState<{ market: MarketView; q: string }[]>([]);
+  const [slip, setSlip] = useState<{ market: MarketView; q: string; side: number }[]>([]);
   const [slipOpen, setSlipOpen] = useState(false);
   const [parlays, setParlays] = useState<ParlayView[]>([]);
   const [positions, setPositions] = useState<{ market: string; side: number; amount: number; claimed: boolean }[]>([]);
@@ -503,6 +503,15 @@ export default function GafferApp() {
   const sqTok = () => (typeof window !== "undefined" ? localStorage.getItem("gaffer_squad_token") || "" : "");
   const syncSquad = (patch: any) => { if (squadCode && userId) squadApi("sync", { code: squadCode, userId, token: sqTok(), patch }).then((r) => r?.squad && setSquadData(r.squad)); };
   const createMySquad = async (name: string, nm?: string) => { if (nm) setName(nm); const r = await squadApi("create", { name, member: member(nm) }); if (r?.squad) { setSquadCode(r.squad.code); localStorage.setItem("gaffer_squad", r.squad.code); if (r.token) localStorage.setItem("gaffer_squad_token", r.token); setSquadData(r.squad); flash("Squad created — share the code"); } };
+  /** Q6 — no mates to invite? Land in your nation's public room, which already has people in it. */
+  const joinTribe = async () => {
+    const r = await joinNationRoom(nation, member());
+    if (r?.squad) {
+      setSquadCode(r.squad.code); localStorage.setItem("gaffer_squad", r.squad.code);
+      if (r.token) localStorage.setItem("gaffer_squad_token", r.token);
+      setSquadData(r.squad); flash(`You're in the ${nation} tribe`);
+    } else flash("Couldn't open the room", "err");
+  };
   const joinByCode = async (code: string, nm?: string) => { if (nm) setName(nm); const r = await squadApi("join", { code, member: member(nm) }); if (r?.squad) { setSquadCode(r.squad.code); localStorage.setItem("gaffer_squad", r.squad.code); if (r.token) localStorage.setItem("gaffer_squad_token", r.token); setSquadData(r.squad); setPendingJoin(""); flash("Joined " + r.squad.name); } else flash("Squad not found", "err"); };
   const postBanter = async (text: string) => { const r = await squadApi("post", { code: squadCode, userId, name: userName, text, token: sqTok() }); if (r?.squad) setSquadData(r.squad); };
   const reactTo = async (msgId: string, emoji: string) => { const r = await squadApi("react", { code: squadCode, msgId, emoji, userId, token: sqTok() }); if (r?.squad) setSquadData(r.squad); };
@@ -515,22 +524,42 @@ export default function GafferApp() {
     if (slip.find((s) => s.market.pubkey === m.pubkey)) { flash("Already in your slip"); return; }
     if (slip.length > 0 && slip[0].market.fixtureId !== m.fixtureId) { flash("One match per slip for now", "err"); return; }
     if (slip.length >= 8) { flash("Max 8 calls in a slip", "err"); return; }
-    setSlip([...slip, { market: m, q: label(m).q }]); flash("Added to your slip");
+    setSlip([...slip, { market: m, q: label(m).q, side: 1 }]); flash("Added to your slip");
   };
   const removeFromSlip = (pubkey: string) => setSlip(slip.filter((s) => s.market.pubkey !== pubkey));
-  const placeSlip = async (stakeSol: number) => {
+  /** S3 — edit a leg before the lock: flip which side of that call you're actually on. */
+  const flipLeg = (pubkey: string) => setSlip(slip.map((s) => (s.market.pubkey === pubkey ? { ...s, side: s.side === 1 ? 2 : 1 } : s)));
+  /** S3 — place the slip as POWER (one parlay, all must land) or FLEX (each call stands on its own).
+   *
+   * Flex needs no kernel change: it is the stake split across the same pools you already picked, each
+   * settling and paying independently. Power is the parlay — one miss and the slip is off, and the whole
+   * pot goes to the people who called every leg. Two genuinely different bets, one slip. */
+  const placeSlip = async (stakeSol: number, shape: "power" | "flex" = "power") => {
     if (slip.length < 2) { flash("Add at least 2 calls to a slip", "err"); return; }
-    if (!parlay) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return; }
+    const need = shape === "flex" ? kernel : parlay;
+    if (!need) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return; }
     setBusy("slip");
     try {
-      // Power only (all-must-land) in v1. Flex (insured partial payout) needs kernel partial-payout — deferred (see BUILD-TODO B).
-      const fixtureId = Number(slip[0].market.fixtureId);
-      const legs = slip.map((s) => ({ statKey: s.market.statKey, period: s.market.period, threshold: s.market.threshold, comparison: s.market.comparison }));
-      const expiry = Math.floor(Date.now() / 1000) + 7 * 86400;
-      const pk = await parlay.create(fixtureId, legs, expiry); // user-signed + rent-funded (not the server keypair)
-      const joinSig = await parlay.join(pk, 1, stakeSol); // back YES = every call lands
-      pointsApi("stake", { userId, token: pTok(), sig: joinSig, squadCode: squadCode || null }).then((r) => { if (r?.points != null) setPoints(r.points); });
-      flash(`Slip placed — ${slip.length} calls, all must land`); setSlip([]); setSlipOpen(false); await refresh();
+      if (shape === "flex") {
+        const each = Math.max(0.001, Math.round((stakeSol / slip.length) * 1000) / 1000);
+        let last = "";
+        for (const s of slip) {
+          const side = s.side ?? 1;
+          last = await kernel!.join(s.market.pubkey, side, each);
+          economyDo("stamp", { userId, token: pTok(), market: s.market.pubkey, side: side === 1 ? "yes" : "no", calledAt: 50, fixtureId: Number(s.market.fixtureId) || 0 });
+        }
+        if (last) pointsApi("stake", { userId, token: pTok(), sig: last, squadCode: squadCode || null }).then((r) => { if (r?.points != null) setPoints(r.points); });
+        flash(`Flex placed — ${slip.length} calls, each pays on its own`);
+      } else {
+        const fixtureId = Number(slip[0].market.fixtureId);
+        const legs = slip.map((s) => ({ statKey: s.market.statKey, period: s.market.period, threshold: s.market.threshold, comparison: s.market.comparison }));
+        const expiry = Math.floor(Date.now() / 1000) + 7 * 86400;
+        const pk = await parlay!.create(fixtureId, legs, expiry); // user-signed + rent-funded (not the server keypair)
+        const joinSig = await parlay!.join(pk, 1, stakeSol); // back YES = every call lands
+        pointsApi("stake", { userId, token: pTok(), sig: joinSig, squadCode: squadCode || null }).then((r) => { if (r?.points != null) setPoints(r.points); });
+        flash(`Slip placed — ${slip.length} calls, all must land`);
+      }
+      setSlip([]); setSlipOpen(false); await refresh();
     } catch (e: any) { flash(prettyErr(e), "err"); } finally { setBusy(null); }
   };
   const fadeParlayFn = async (p: ParlayView) => {
@@ -593,7 +622,7 @@ export default function GafferApp() {
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
         {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
-        {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} />}
+        {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} joinTribe={joinTribe} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
         {tab === "you" && <You streak={streak} bal={bal} points={points} nation={nation} userName={userName} userId={userId} flash={flash} cfg={cfg} muted={MONEY_MUTED} toggleMute={toggleMute} spoiler={SPOILER_SAFE} toggleSpoiler={toggleSpoiler} econ={econ} onWager={onWager} onEarnBack={onEarnBack} econBusy={econBusy} />}
@@ -667,7 +696,7 @@ export default function GafferApp() {
       )}
       {DEV && !paid && <button onClick={() => setPaid({ amount: 61.4, q: "Egypt to score before half-time?", when: new Date().toLocaleString(), calledAt: 23, staked: 5, mult: 12.28, sig: "" })} className="fixed bottom-40 right-3 z-30 px-3 py-2 rounded-lg bg-[var(--ink)] text-white mono text-[10px] opacity-60">▸ preview PAID</button>}
       {slip.length > 0 && !slipOpen && <button onClick={() => setSlipOpen(true)} className="fixed bottom-[120px] left-1/2 -translate-x-1/2 z-30 px-5 py-3 rounded-full bg-[var(--green)] text-white font-bold shadow-lg">Slip · {slip.length} call{slip.length === 1 ? "" : "s"} →</button>}
-      {slipOpen && <SlipSheet slip={slip} removeFromSlip={removeFromSlip} placeSlip={placeSlip} close={() => setSlipOpen(false)} busy={busy} />}
+      {slipOpen && <SlipSheet slip={slip} removeFromSlip={removeFromSlip} flipLeg={flipLeg} placeSlip={placeSlip} close={() => setSlipOpen(false)} busy={busy} />}
       {/* Toast always sits highest in the bottom stack (nav 0–72 · call ticker 72 · slip 120 · toast 176), so it never overlaps a pill or a button. */}
       {toast && <div className={`fixed bottom-[176px] left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-lg ${toast.kind === "ok" ? "bg-[var(--ink)]" : "bg-red-600"}`}>{toast.msg}</div>}
       {ageOk && !onboarded && <Onboarding onDone={() => { localStorage.setItem("gaffer_onboarded", "1"); setOnboarded(true); }} />}
@@ -1064,6 +1093,34 @@ function QuestBoard({ econ }: { econ: Economy | null }) {
   );
 }
 
+/** T5 — "Day N at the Cup": the day told back to the room, from numbers we already have. A quiet day is
+ * allowed to be quiet rather than padded with a highlight that didn't happen. */
+function RecapCard() {
+  const [r, setR] = useState<any>(null);
+  useEffect(() => { fetch("/api/recap").then((x) => x.json()).then(setR).catch(() => {}); }, []);
+  if (!r || r.empty || r.day <= 0) return null;
+  const hasSomething = r.biggestWin || r.boldestCall || r.poolsSettled > 0;
+  if (!hasSomething) return null;
+  return (
+    <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
+      <div className="flex items-center justify-between">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">{r.dayLabel}</span>
+        {r.players > 0 ? <span className="mono text-[10px] text-[var(--muted)]">{r.players} playing</span> : null}
+      </div>
+      {r.biggestWin ? (
+        <div className="mt-2 text-sm"><b>{r.biggestWin.name}</b> turned {fmtAmt(r.biggestWin.stake)} into <b className="text-[var(--green)]">{fmtAmt(r.biggestWin.payout)}</b> on “{r.biggestWin.question}”.</div>
+      ) : null}
+      {r.boldestCall ? (
+        <div className="mt-1 text-[12px] text-[var(--muted)]">Boldest call that landed: <b className="text-[var(--ink)]">{r.boldestCall.name}</b> at {r.boldestCall.calledAt}% — the room said no.</div>
+      ) : null}
+      <div className="mt-2 flex items-center gap-3 mono text-[10px] text-[var(--muted)]">
+        {r.poolsSettled > 0 ? <span>{r.poolsSettled} pools settled</span> : null}
+        {r.roomAccuracy != null ? <span>room read {r.roomAccuracy}% right</span> : null}
+      </div>
+    </div>
+  );
+}
+
 /** T4 — the rollover headline pot. Every remainder a settled pool leaves behind (rounding dust and
  * anything never collected) carries into the next day's headline pool. It is a real, on-chain number
  * read back off the vaults — it only ever grows, and it is never shown as a rounded-up guess. */
@@ -1348,6 +1405,7 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
       </div>
 
       <QuestBoard econ={econ} />
+      <RecapCard />
       <RolloverPot econ={econ} />
       <KnockoutEntry econ={econ} onEnter={onEnterKnockouts} busy={econBusy} name={userName} />
       <MysterySlot econ={econ} onPlay={onPlayMystery} busy={econBusy} />
@@ -1533,8 +1591,24 @@ function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot
   );
 }
 
-function SlipSheet({ slip, removeFromSlip, placeSlip, close, busy }: any) {
+function SlipSheet({ slip, removeFromSlip, flipLeg, placeSlip, close, busy }: any) {
   const [stake, setStake] = useState(0.05);
+  const [shape, setShape] = useState<"power" | "flex">("power");
+
+  /** S3 — the multiplier, recomputed as legs come and go. POWER multiplies each leg's pot share (one
+   *  miss and it's off). FLEX is the average of the legs, because each stands alone. Both are the real
+   *  parimutuel projection from the pools as they stand, never a bookmaker's price. */
+  const legMult = (s: any) => {
+    const yes = Number(s.market.yesTotal), no = Number(s.market.noTotal), pot = yes + no;
+    const mine = s.side === 1 ? yes : no;
+    if (!pot || !mine) return 2;                     // an empty side: you'd take the whole pot
+    return pot / mine;
+  };
+  const mult = slip.length
+    ? shape === "power"
+      ? slip.reduce((m: number, s: any) => m * legMult(s), 1)
+      : slip.reduce((m: number, s: any) => m + legMult(s), 0) / slip.length
+    : 1;
   return (
     <div className="fixed inset-0 z-40 bg-black/40 flex items-end" onClick={close}>
       <div className="w-full max-w-[440px] mx-auto bg-white rounded-t-3xl p-6 pb-9 gf-pop max-h-[88%] overflow-y-auto relative" onClick={(e) => e.stopPropagation()}>
@@ -1542,24 +1616,44 @@ function SlipSheet({ slip, removeFromSlip, placeSlip, close, busy }: any) {
         <button onClick={close} aria-label="Close" className="absolute top-4 right-4 w-8 h-8 rounded-full bg-[#FAFAF7] border border-[var(--line)] text-[var(--muted)] flex items-center justify-center">✕</button>
         <div className="flex items-center justify-between">
           <h3 className="text-2xl font-bold tracking-tight">Your slip</h3>
-          <span className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF]">{slip.length} call{slip.length === 1 ? "" : "s"} · all must land</span>
+          <span className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF]">{slip.length} call{slip.length === 1 ? "" : "s"}</span>
         </div>
         <div className="mt-4 space-y-2">
           {slip.map((s: any) => (
             <div key={s.market.pubkey} className="flex items-center gap-2 bg-[#FAFAF7] border border-[var(--line)] rounded-xl p-3">
-              <span className="flex-1 text-sm font-semibold">{s.q}?</span>
+              <button onClick={() => flipLeg(s.market.pubkey)} aria-label="Flip this call"
+                className={`mono text-[9px] font-extrabold tracking-widest rounded px-1.5 py-1 shrink-0 ${s.side === 1 ? "bg-[var(--green)] text-white" : "bg-[var(--ink)] text-white"}`}>
+                {s.side === 1 ? "YES" : "NO"}
+              </button>
+              <span className="flex-1 text-sm font-semibold truncate">{s.q}?</span>
+              <span className="mono text-[10px] text-[var(--muted)] tabular-nums">{legMult(s).toFixed(2)}×</span>
               <button onClick={() => removeFromSlip(s.market.pubkey)} className="mono text-[11px] text-[var(--muted)]">remove</button>
             </div>
           ))}
         </div>
-        <div className="mt-4 rounded-2xl bg-[var(--ink)] text-white p-4">
-          <div className="mono text-[10px] uppercase tracking-widest text-[var(--greenb)]">If they ALL land</div>
-          <div className="text-[13px] text-white/90 mt-1">You split the whole pot with everyone who also backed all {slip.length} to land — and it grows every time someone bets the slip busts. One miss and the slip is off.</div>
+        <div className="mt-4 flex gap-2">
+          {(["power", "flex"] as const).map((k) => (
+            <button key={k} onClick={() => setShape(k)}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-sm ${shape === k ? "bg-[var(--ink)] text-white" : "bg-[#FAFAF7] border border-[var(--line)]"}`}>
+              {k === "power" ? "Power" : "Flex"}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 rounded-2xl bg-[var(--ink)] text-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="mono text-[10px] uppercase tracking-widest text-[var(--greenb)]">{shape === "power" ? "If they ALL land" : "Each call pays alone"}</div>
+            <div className="text-2xl font-black tabular-nums text-[var(--greenb)] transition-all duration-300">{mult.toFixed(2)}×</div>
+          </div>
+          <div className="text-[13px] text-white/90 mt-1">
+            {shape === "power"
+              ? `You split the whole pot with everyone who also backed all ${slip.length} to land — and it grows every time someone bets the slip busts. One miss and the slip is off.`
+              : `Your stake is split across the ${slip.length} calls. Each one settles on its own result, so a miss costs you that call and nothing else.`}
+          </div>
         </div>
         <div className="mt-4 mono text-[10px] uppercase tracking-widest text-[#9CA3AF]">Stake</div>
         <div className="flex gap-2 mt-2">{[0.02, 0.05, 0.1].map((v) => (<button key={v} onClick={() => setStake(v)} className={`flex-1 h-11 rounded-xl font-semibold ${stake === v ? "border-2 border-[var(--green)] text-[var(--green)]" : "bg-[#FAFAF7] border border-[var(--line)]"}`}>{v}</button>))}</div>
-        <button disabled={busy === "slip" || slip.length < 2} onClick={() => placeSlip(stake)} className="mt-4 w-full h-14 rounded-2xl bg-[var(--green)] text-white text-lg font-bold disabled:opacity-50">{busy === "slip" ? "Placing…" : slip.length < 2 ? "Add 2+ calls" : `Place slip · ${stake}`}</button>
-        <p className="text-center text-xs text-[#9CA3AF] mt-3">All calls in one match · collect the moment the last one lands.</p>
+        <button disabled={busy === "slip" || slip.length < 2} onClick={() => placeSlip(stake, shape)} className="mt-4 w-full h-14 rounded-2xl bg-[var(--green)] text-white text-lg font-bold disabled:opacity-50">{busy === "slip" ? "Placing…" : slip.length < 2 ? "Add 2+ calls" : `Place ${shape === "power" ? "Power" : "Flex"} slip · ${stake}`}</button>
+        <p className="text-center text-xs text-[#9CA3AF] mt-3">{shape === "power" ? "All calls in one match · collect the moment the last one lands." : "All calls in one match · each collects the moment it lands."}</p>
       </div>
     </div>
   );
@@ -1869,7 +1963,7 @@ function CommissionerPanel({ settings, members, userId, onCommish }: any) {
   );
 }
 
-function Squad({ userId, userName, setName, nation, setNation, squadCode, squadData, createMySquad, joinByCode, postBanter, reactTo, copyCall, leaveSquad, pendingJoin, flash, duels = [], squadSettings, lore = [], onFade, onCommish }: any) {
+function Squad({ userId, userName, setName, nation, setNation, squadCode, squadData, createMySquad, joinByCode, postBanter, reactTo, copyCall, leaveSquad, pendingJoin, flash, duels = [], squadSettings, lore = [], onFade, onCommish, joinTribe }: any) {
   const [view, setView] = useState<"squad" | "nations">("squad");
   const [sqName, setSqName] = useState("");
   const [code, setCode] = useState(pendingJoin || "");
@@ -1940,6 +2034,14 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
         </div>
         <Section title="Your name" />
         <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="What should the squad call you?" className="w-full h-12 rounded-xl border border-[var(--line)] px-4 bg-white" />
+        {/* Q6 — nobody should hit a dead end because their mates haven't joined yet. */}
+        <div className="mt-4 rounded-2xl p-4 bg-[var(--dark)] text-white">
+          <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">No mates on it yet?</div>
+          <div className="text-sm font-bold mt-0.5">Join the {nation} tribe.</div>
+          <p className="text-[12px] opacity-75 mt-0.5">A public room of {nation} fans. Same banter, same windows, already full of people.</p>
+          <button onClick={joinTribe} className="mt-3 w-full py-2.5 rounded-xl bg-white text-[var(--ink)] font-bold text-sm">Take me there</button>
+        </div>
+
         <Section title="Start a squad" />
         <input value={sqName} onChange={(e) => setSqName(e.target.value)} placeholder="Squad name (e.g. The Camden Lot)" className="w-full h-12 rounded-xl border border-[var(--line)] px-4 bg-white" />
         <button disabled={!sqName.trim() || !handle.trim()} onClick={() => createMySquad(sqName.trim(), handle.trim())} className="mt-2 w-full h-12 rounded-xl bg-[var(--ink)] text-white font-bold disabled:opacity-40">Create squad</button>

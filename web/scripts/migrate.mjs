@@ -32,6 +32,38 @@ const statements = [
   // when a pick may be revealed. Concealing only in the UI would leave the side in the response body.
   `ALTER TABLE feed ADD COLUMN IF NOT EXISTS lock_ts bigint`,
 
+  // Q7 — The Round Table: a per-round snake draft of surviving nations on a shared clock. Draft night
+  // is what sustains a 25-year league; the dark days between rounds are dead air the product can own.
+  `CREATE TABLE IF NOT EXISTS drafts (
+     id text PRIMARY KEY,
+     squad_code text NOT NULL,
+     round int NOT NULL DEFAULT 1,
+     state text NOT NULL DEFAULT 'live',      -- live | done
+     pick_index int NOT NULL DEFAULT 0,       -- whose turn, as an index into draft_order
+     deadline bigint NOT NULL,
+     pick_secs int NOT NULL DEFAULT 40,
+     created_at bigint NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS drafts_squad_idx ON drafts (squad_code)`,
+  `CREATE TABLE IF NOT EXISTS draft_order (
+     draft_id text NOT NULL,
+     pick_no int NOT NULL,
+     user_id text NOT NULL,
+     name text NOT NULL DEFAULT '',
+     PRIMARY KEY (draft_id, pick_no)
+   )`,
+  `CREATE TABLE IF NOT EXISTS draft_picks (
+     draft_id text NOT NULL,
+     nation text NOT NULL,
+     user_id text NOT NULL,
+     name text NOT NULL DEFAULT '',
+     pick_no int NOT NULL,
+     auto boolean NOT NULL DEFAULT false,
+     ts bigint NOT NULL,
+     PRIMARY KEY (draft_id, nation)
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS draft_picks_slot ON draft_picks (draft_id, pick_no)`,
+
   // Q2 — the lore wall. A moment is auto-named when it settles, and pinned forever.
   `CREATE TABLE IF NOT EXISTS lore (
      id bigserial PRIMARY KEY,

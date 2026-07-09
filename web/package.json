@@ -12,7 +12,9 @@
     "migrate": "node scripts/migrate.mjs",
     "test:economy": "node scripts/test-economy.mjs",
     "test:live": "node scripts/test-live.mjs",
-    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs"
+    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs",
+    "test:squad": "node scripts/test-squad.mjs",
+    "test:draft": "node scripts/test-draft.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

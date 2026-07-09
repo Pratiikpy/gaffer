@@ -6,6 +6,7 @@ import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
 import MysteryMatch from "./MysteryMatch";
+import RoundTable from "./RoundTable";
 import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
@@ -1961,6 +1962,17 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
           </div>
         );
       })()}
+
+      {/* Q7 — draft night. The dark days between rounds are dead air this product can own. */}
+      {squadCode && (
+        <RoundTable
+          code={squadCode}
+          userId={userId}
+          token={typeof window !== "undefined" ? localStorage.getItem("gaffer_squad_token") || "" : ""}
+          isOwner={squadSettings?.ownerId === userId}
+          flash={flash}
+        />
+      )}
 
       {/* Q2 — the lore wall: moments auto-named from what actually happened, pinned forever. */}
       {lore.length > 0 && (

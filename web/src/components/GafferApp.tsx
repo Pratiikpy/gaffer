@@ -699,7 +699,32 @@ export default function GafferApp() {
       {slipOpen && <SlipSheet slip={slip} removeFromSlip={removeFromSlip} flipLeg={flipLeg} placeSlip={placeSlip} close={() => setSlipOpen(false)} busy={busy} />}
       {/* Toast always sits highest in the bottom stack (nav 0–72 · call ticker 72 · slip 120 · toast 176), so it never overlaps a pill or a button. */}
       {toast && <div className={`fixed bottom-[176px] left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-lg ${toast.kind === "ok" ? "bg-[var(--ink)]" : "bg-red-600"}`}>{toast.msg}</div>}
-      {ageOk && !onboarded && <Onboarding onDone={() => { localStorage.setItem("gaffer_onboarded", "1"); setOnboarded(true); }} />}
+      {ageOk && !onboarded && (
+        <Onboarding
+          onDone={() => { localStorage.setItem("gaffer_onboarded", "1"); setOnboarded(true); }}
+          onFreePick={(side) => freePick(side)}
+          freePicked={freePicked}
+          matchLabel={FIXTURE_NAMES[String(selectedFixture)] ? `${fx(selectedFixture).home} v ${fx(selectedFixture).away}` : "The match is on"}
+          nation={nation}
+          /* If they arrived on an invite, show the squad already calling it before any ask. */
+          mates={(squadData?.feed || [])
+            .filter((f: any) => f.kind === "call" && f.side)
+            .slice(-3)
+            .map((f: any) => ({ name: f.name, side: f.side }))}
+          onSaveName={(n) => { setName(n); localStorage.setItem("gaffer_name", n); syncSquad({ name: n }); }}
+          onAskPush={async () => {
+            try {
+              const tok = localStorage.getItem("gaffer_ptoken") || "";
+              if (!userId || !tok) return false;
+              return await enablePush(userId, tok, squadCode || null);
+            } catch { return false; }
+          }}
+          onShare={async () => {
+            const text = "I'm calling the World Cup on GAFFER — paid the second it happens. 🟢 gaffer-cyan.vercel.app";
+            try { if ((navigator as any).share) await (navigator as any).share({ text }); else await navigator.clipboard.writeText(text); } catch { /* dismissed */ }
+          }}
+        />
+      )}
       {!ageOk && <AgeGate onConfirm={confirmAge} />}
     </div>
   );
@@ -837,24 +862,115 @@ function OnbMark({ kind }: { kind: "call" | "paid" | "freeze" }) {
 
 // The 8-second read: three cards, once ever, skippable — a first-timer knows the whole game before
 // their first tap (Probo's radical-legibility lesson).
-function Onboarding({ onDone }: { onDone: () => void }) {
-  const [i, setI] = useState(0);
-  const cards = [
-    { icon: "call" as const, h: "Call what happens next", p: "“USA to score?” Back YES or NO with play-coins — everyone right splits the pot. No bookie, no house." },
-    { icon: "paid" as const, h: "Paid the second it happens", p: "The match itself settles the pot. When you're right, the money's yours instantly — no one can void it, limit you, or hold your payout. Every win comes with a receipt you can check." },
-    { icon: "freeze" as const, h: "Don't miss the Freeze", p: "When a goal goes to review, everyone else locks up — our 20-second window opens. Read it right, get paid." },
-  ];
-  const c = cards[i];
-  return (
-    <div className="fixed inset-0 z-[55] bg-[var(--ink)] text-white flex flex-col items-center justify-center px-8 text-center" onClick={() => (i < 2 ? setI(i + 1) : onDone())}>
-      <div className="gf-pop" key={i}><OnbMark kind={c.icon} /></div>
-      <div className="text-3xl font-extrabold tracking-tight mt-6 gf-roll" key={"h" + i}>{c.h}</div>
-      <p className="text-[16px] text-white/75 mt-3 leading-relaxed max-w-xs">{c.p}</p>
-      <div className="flex gap-1.5 mt-8">{cards.map((_, k) => (<span key={k} className={`w-2 h-2 rounded-full ${k === i ? "bg-white" : "bg-white/25"}`} />))}</div>
-      <button className="mt-8 w-full max-w-xs h-13 py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold" onClick={(e) => { e.stopPropagation(); i < 2 ? setI(i + 1) : onDone(); }}>{i < 2 ? "Next" : "Let's play"}</button>
-      <button className="mt-3 mono text-[11px] text-white/40" onClick={(e) => { e.stopPropagation(); onDone(); }}>skip</button>
-    </div>
+/** Y5 — the first sixty seconds.
+ *
+ * Deferred signup is worth +20% DAU, and 78% of people won't install an app for a one-off. So the order
+ * is fixed and the ask comes last: land INSIDE the live match, see people you know already calling it,
+ * lock a free call, and only then get asked who you are — framed as saving the call you just made, with
+ * a way out. The un-voidable sentence lands after the value, not before it, because it is a promise about
+ * something you now have. The push ask comes after that, softly, and never as a wall.
+ *
+ * Every step here is skippable. A wall in the first minute is the most expensive thing an app can build.
+ */
+function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation, onSaveName, onAskPush, onShare }: {
+  onDone: () => void;
+  onFreePick?: (side: "yes" | "no") => void;
+  freePicked?: boolean;
+  matchLabel?: string;
+  mates?: { name: string; side: number }[];
+  nation?: string;
+  onSaveName?: (n: string) => void;
+  onAskPush?: () => Promise<boolean> | void;
+  onShare?: () => void;
+}) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const invited = (mates?.length ?? 0) > 0;
+
+  // 0–10s: you are already in the match, and your mates are already in it.
+  if (step === 0) return (
+    <Shell>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{invited ? "Your squad is in" : "On right now"}</div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2">{matchLabel || "The match is on."}</div>
+      {invited ? (
+        <div className="mt-5 w-full max-w-xs space-y-1.5">
+          {mates!.slice(0, 3).map((m, i) => (
+            <div key={i} className="flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
+              <span className={`mono text-[9px] font-extrabold tracking-widest rounded px-1.5 py-0.5 ${m.side === 1 ? "bg-[var(--greenb)] text-[var(--ink)]" : "bg-white/20 text-white"}`}>{m.side === 1 ? "YES" : "NO"}</span>
+              <span className="text-sm font-semibold flex-1 text-left truncate">{m.name} has called it</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[16px] text-white/75 mt-3 leading-relaxed max-w-xs">Call what happens next. Everyone who&apos;s right splits the pot. No bookie, no house.</p>
+      )}
+      <Next label="What&apos;s your call?" onClick={() => setStep(1)} onSkip={onDone} />
+    </Shell>
   );
+
+  // 10–25s: the free call, before any identity ask at all.
+  if (step === 1) return (
+    <Shell>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">Free · no sign-up</div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2">Goal before half-time?</div>
+      <p className="text-[14px] text-white/60 mt-2">{matchLabel}</p>
+      <div className="mt-6 w-full max-w-xs flex gap-2">
+        <button onClick={() => { onFreePick?.("yes"); setStep(2); }} className="flex-1 py-4 rounded-2xl bg-[var(--greenb)] text-[var(--ink)] text-lg font-bold">Yes</button>
+        <button onClick={() => { onFreePick?.("no"); setStep(2); }} className="flex-1 py-4 rounded-2xl bg-white/15 text-white text-lg font-bold">No</button>
+      </div>
+      <button className="mt-6 mono text-[11px] text-white/40" onClick={onDone}>skip</button>
+    </Shell>
+  );
+
+  // 25–35s: identity, framed as saving what you already did. With a way out.
+  if (step === 2) return (
+    <Shell>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">Your call is in</div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2">Save it under a name.</div>
+      <p className="text-[14px] text-white/60 mt-2 max-w-xs">So your squad knows who called it, and your record follows you.</p>
+      <input value={name} onChange={(e) => setName(e.target.value.slice(0, 24))} placeholder="Kev"
+        className="mt-5 w-full max-w-xs h-12 rounded-xl bg-white/10 border border-white/20 px-4 text-white placeholder-white/30 text-center text-lg font-bold" />
+      <button disabled={!name.trim()} onClick={() => { onSaveName?.(name.trim()); setStep(3); }}
+        className="mt-4 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold disabled:opacity-30">Save my call</button>
+      <button className="mt-3 mono text-[11px] text-white/40" onClick={() => setStep(3)}>later</button>
+    </Shell>
+  );
+
+  // 35–45s: the un-voidable sentence — a promise about something you now hold.
+  if (step === 3) return (
+    <Shell>
+      <div className="mx-auto"><OnbMark kind="paid" /></div>
+      <div className="text-3xl font-extrabold tracking-tight mt-5">When you win, the pool pays you.</div>
+      <p className="text-[16px] text-white/75 mt-3 leading-relaxed max-w-xs">
+        No one can void it, limit you, or hold your payout. Every win comes with a receipt you can check.
+      </p>
+      <Next label="Good" onClick={() => setStep(4)} onSkip={onDone} />
+    </Shell>
+  );
+
+  // 45–60s: the soft push ask, after the value. Then the share back to the chat.
+  return (
+    <Shell>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">One last thing</div>
+      <div className="text-3xl font-extrabold tracking-tight mt-2">Want a nudge when it lands?</div>
+      <p className="text-[14px] text-white/60 mt-2 max-w-xs">We&apos;ll ping you when your call settles, and when the Freeze opens. Nothing else, ever.</p>
+      <button onClick={async () => { await onAskPush?.(); onDone(); }} className="mt-6 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold">Yes, ping me</button>
+      <button onClick={() => { onShare?.(); onDone(); }} className="mt-2 w-full max-w-xs py-3.5 rounded-2xl bg-white/15 text-white font-bold">Share it to the chat</button>
+      <button className="mt-3 mono text-[11px] text-white/40" onClick={onDone}>not now</button>
+    </Shell>
+  );
+
+  function Shell({ children }: { children: React.ReactNode }) {
+    return <div className="fixed inset-0 z-[55] bg-[var(--ink)] text-white flex flex-col items-center justify-center px-8 text-center">{children}</div>;
+  }
+  function Next({ label, onClick, onSkip }: { label: string; onClick: () => void; onSkip: () => void }) {
+    return (
+      <>
+        <button className="mt-8 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold" onClick={onClick}>{label}</button>
+        <button className="mt-3 mono text-[11px] text-white/40" onClick={onSkip}>skip</button>
+      </>
+    );
+  }
 }
 
 /** The Wake (N1) — elimination-night ritual. Detects, from real results, whether the fan's nation lost

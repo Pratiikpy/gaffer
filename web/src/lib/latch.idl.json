@@ -652,6 +652,211 @@
       ]
     },
     {
+      "name": "open_window",
+      "docs": [
+        "Attach a window to an open market: the market's `threshold` becomes the DELTA that must occur",
+        "between `start_ts` and the market's expiry. Only the market's authority may do this, and only",
+        "before anyone has staked, so nobody's bet changes meaning underneath them."
+      ],
+      "discriminator": [
+        51,
+        40,
+        53,
+        181,
+        170,
+        43,
+        128,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "window",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  105,
+                  110,
+                  100,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "start_ts",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "prove_window_baseline",
+      "docs": [
+        "Step one: prove where the stat STOOD when the window opened, and bank it.",
+        "",
+        "Two Merkle proofs exceed Solana's 1232-byte transaction limit, so a window settles across two",
+        "instructions. This one proves `value(t_a) <= baseline` for the settler's chosen baseline and",
+        "records it. It decides nothing alone: a banked baseline is worthless without the second proof."
+      ],
+      "discriminator": [
+        251,
+        41,
+        2,
+        14,
+        213,
+        85,
+        218,
+        114
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "window",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  105,
+                  110,
+                  100,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "daily_scores_merkle_roots"
+        },
+        {
+          "name": "txoracle_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "baseline",
+          "type": "i32"
+        },
+        {
+          "name": "ts",
+          "type": "i64"
+        },
+        {
+          "name": "fixture_summary",
+          "type": {
+            "defined": {
+              "name": "ScoresBatchSummary"
+            }
+          }
+        },
+        {
+          "name": "fixture_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "main_tree_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "stat_a",
+          "type": {
+            "defined": {
+              "name": "StatTerm"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "resolve_parlay",
       "docs": [
         "After expiry + grace, if not all legs hit, the parlay busts → NO wins. The grace gives the",
@@ -994,6 +1199,126 @@
       ]
     },
     {
+      "name": "settle_window",
+      "docs": [
+        "Step two: prove the stat MOVED by `delta` after the banked baseline, and pay.",
+        "",
+        "With `value(t_a) <= baseline` banked, proving `value(t_b) > baseline + delta - 1` forces",
+        "`value(t_b) - value(t_a) >= delta`. The implication holds for EVERY baseline, so the settler's",
+        "freedom to choose one buys them nothing."
+      ],
+      "discriminator": [
+        136,
+        219,
+        61,
+        205,
+        163,
+        211,
+        235,
+        31
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "window",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  105,
+                  110,
+                  100,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "daily_scores_merkle_roots"
+        },
+        {
+          "name": "txoracle_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "ts_b",
+          "type": "i64"
+        },
+        {
+          "name": "fixture_summary",
+          "type": {
+            "defined": {
+              "name": "ScoresBatchSummary"
+            }
+          }
+        },
+        {
+          "name": "fixture_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "main_tree_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "stat_b",
+          "type": {
+            "defined": {
+              "name": "StatTerm"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "void",
       "docs": [
         "Void an unsettled market once it is past expiry + grace, enabling refunds. The grace window",
@@ -1067,6 +1392,19 @@
         0,
         227,
         198,
+        154
+      ]
+    },
+    {
+      "name": "MarketWindow",
+      "discriminator": [
+        216,
+        56,
+        50,
+        193,
+        220,
+        120,
+        68,
         154
       ]
     },
@@ -1212,76 +1550,111 @@
     },
     {
       "code": 6009,
+      "name": "WindowAfterStake",
+      "msg": "A window cannot be attached after someone has staked"
+    },
+    {
+      "code": 6010,
+      "name": "BadDelta",
+      "msg": "A window needs a delta greater than zero"
+    },
+    {
+      "code": 6011,
+      "name": "WindowMismatch",
+      "msg": "That window belongs to another market"
+    },
+    {
+      "code": 6012,
+      "name": "WindowOutOfOrder",
+      "msg": "The two snapshots are out of order"
+    },
+    {
+      "code": 6013,
+      "name": "WindowNotStarted",
+      "msg": "The earlier snapshot predates the window"
+    },
+    {
+      "code": 6014,
+      "name": "WindowBaselineNotProven",
+      "msg": "The baseline was not proven at the window's start"
+    },
+    {
+      "code": 6015,
+      "name": "Unauthorized",
+      "msg": "Only the market authority can do that"
+    },
+    {
+      "code": 6016,
       "name": "Expired",
       "msg": "Proof snapshot is after the market window (ts > expiry)"
     },
     {
-      "code": 6010,
+      "code": 6017,
       "name": "OnlyGreaterThan",
       "msg": "Only GreaterThan (monotone over-threshold) markets are supported in v1"
     },
     {
-      "code": 6011,
+      "code": 6018,
       "name": "BadExpiry",
       "msg": "Expiry must be in the future"
     },
     {
-      "code": 6012,
+      "code": 6019,
       "name": "BadLock",
       "msg": "Lock must be in the future and no later than expiry"
     },
     {
-      "code": 6013,
+      "code": 6020,
       "name": "PoolLocked",
       "msg": "Pool is locked — no new calls after the cut-off"
     },
     {
-      "code": 6014,
+      "code": 6021,
       "name": "NoVerdict",
       "msg": "validate_stat returned no verdict"
     },
     {
-      "code": 6015,
+      "code": 6022,
       "name": "PredicateNotMet",
       "msg": "Predicate not met — not settleable yet"
     },
     {
-      "code": 6016,
+      "code": 6023,
       "name": "NotExpired",
       "msg": "Market not yet expired"
     },
     {
-      "code": 6017,
+      "code": 6024,
       "name": "AlreadyClaimed",
       "msg": "Already claimed"
     },
     {
-      "code": 6018,
+      "code": 6025,
       "name": "NotWinner",
       "msg": "Caller is not on the winning side"
     },
     {
-      "code": 6019,
+      "code": 6026,
       "name": "NotResolved",
       "msg": "Market not resolved"
     },
     {
-      "code": 6020,
+      "code": 6027,
       "name": "BadLegs",
       "msg": "Invalid parlay legs"
     },
     {
-      "code": 6021,
+      "code": 6028,
       "name": "BadRake",
       "msg": "Rake exceeds the hard cap"
     },
     {
-      "code": 6022,
+      "code": 6029,
       "name": "BadFeeRecipient",
       "msg": "Fee recipient does not match config"
     },
     {
-      "code": 6023,
+      "code": 6030,
       "name": "NotConfigAuthority",
       "msg": "Caller is not the config authority"
     }
@@ -1528,6 +1901,46 @@
           {
             "name": "market_id",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketWindow",
+      "docs": [
+        "K2 — a window attached to a market. Kept OUT of `Market` on purpose: adding a field to a live",
+        "account type would change its size, and every pool currently holding money would stop deserialising."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "start_ts",
+            "type": "i64"
+          },
+          {
+            "name": "delta",
+            "type": "i32"
+          },
+          {
+            "name": "baseline",
+            "type": "i32"
+          },
+          {
+            "name": "baseline_ts",
+            "type": "i64"
+          },
+          {
+            "name": "baseline_proven",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

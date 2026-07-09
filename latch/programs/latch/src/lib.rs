@@ -337,6 +337,145 @@ pub mod latch {
         Ok(())
     }
 
+    /* ───────────────────────── K2 · the two-timestamp delta-proof market ─────────────────────────
+     *
+     * The Frozen Window asks a question the absolute-threshold market cannot: "does anyone score in the
+     * NEXT ninety seconds?" — a change across a window, not a level. That is the only shape that makes a
+     * suspension monetisable, and it is why the Freeze paid free points until now.
+     *
+     * `validate_stat` hands back a bool, never a value, so a delta cannot be read off-chain and trusted.
+     * It can, however, be PROVEN. For any baseline `b` the settler picks:
+     *
+     *     value(t_a) <= b                     (proved: LessThan b+1  at t_a)
+     *     value(t_b) >  b + delta - 1         (proved: GreaterThan b+delta-1 at t_b)
+     *   ⇒ value(t_b) - value(t_a) >= delta
+     *
+     * The implication holds for EVERY b, so the settler cannot pick a convenient one: to make both
+     * proofs pass they must actually have moved by `delta` across the window. The soccer stats are
+     * monotone within a match, so the two snapshots order exactly as their timestamps do.
+     *
+     * A window lives in its own account attached to a market. The `Market` struct is untouched, so every
+     * pool already holding money keeps its layout, its claims and its refunds.
+     */
+
+    /// Attach a window to an open market: the market's `threshold` becomes the DELTA that must occur
+    /// between `start_ts` and the market's expiry. Only the market's authority may do this, and only
+    /// before anyone has staked, so nobody's bet changes meaning underneath them.
+    pub fn open_window(ctx: Context<OpenWindow>, start_ts: i64) -> Result<()> {
+        let m = &ctx.accounts.market;
+        require!(m.status == STATUS_OPEN, KernelError::NotOpen);
+        require!(m.yes_total == 0 && m.no_total == 0, KernelError::WindowAfterStake);
+        require!(m.comparison == 0, KernelError::BadComparison);           // delta is an over-threshold move
+        require!(m.threshold > 0, KernelError::BadDelta);                  // a zero-delta window proves nothing
+        require!(start_ts < m.expiry_ts, KernelError::BadExpiry);
+
+        let w = &mut ctx.accounts.window;
+        w.market = m.key();
+        w.start_ts = start_ts;
+        w.delta = m.threshold;
+        w.baseline = 0;
+        w.baseline_ts = 0;
+        w.baseline_proven = false;
+        w.bump = ctx.bumps.window;
+        Ok(())
+    }
+
+    /// Step one: prove where the stat STOOD when the window opened, and bank it.
+    ///
+    /// Two Merkle proofs exceed Solana's 1232-byte transaction limit, so a window settles across two
+    /// instructions. This one proves `value(t_a) <= baseline` for the settler's chosen baseline and
+    /// records it. It decides nothing alone: a banked baseline is worthless without the second proof.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_window_baseline(
+        ctx: Context<ProveWindowBaseline>,
+        baseline: i32,
+        ts: i64,
+        fixture_summary: ScoresBatchSummary,
+        fixture_proof: Vec<ProofNode>,
+        main_tree_proof: Vec<ProofNode>,
+        stat_a: StatTerm,
+    ) -> Result<()> {
+        {
+            let m = &ctx.accounts.market;
+            let w = &ctx.accounts.window;
+            require!(m.status == STATUS_OPEN, KernelError::NotOpen);
+            require_keys_eq!(w.market, m.key(), KernelError::WindowMismatch);
+            require!(fixture_summary.fixture_id == m.fixture_id, KernelError::FixtureMismatch);
+            require!(stat_a.stat_to_prove.key == m.stat_key, KernelError::StatMismatch);
+            require!(ts / 1000 >= w.start_ts, KernelError::WindowNotStarted);
+            require!(ts / 1000 <= m.expiry_ts, KernelError::Expired);
+        }
+
+        // value(t_a) <= baseline   <=>   value(t_a) < baseline + 1
+        let lo = TraderPredicate {
+            threshold: baseline.checked_add(1).ok_or(KernelError::Overflow)?,
+            comparison: Comparison::LessThan,
+        };
+        let txo = ctx.accounts.txoracle_program.to_account_info();
+        let dsr = ctx.accounts.daily_scores_merkle_roots.to_account_info();
+        let below = prove_stat(&txo, &dsr, ts, fixture_summary, fixture_proof, main_tree_proof, lo, stat_a, None, None)?;
+        require!(below, KernelError::WindowBaselineNotProven);
+
+        let w = &mut ctx.accounts.window;
+        // Keep the TIGHTEST baseline ever proven. A smaller baseline is a stronger claim about where the
+        // stat stood, so re-proving can only ratchet it down, never relax it into an easier settlement.
+        if !w.baseline_proven || baseline < w.baseline {
+            w.baseline = baseline;
+            w.baseline_ts = ts;
+        }
+        w.baseline_proven = true;
+        Ok(())
+    }
+
+    /// Step two: prove the stat MOVED by `delta` after the banked baseline, and pay.
+    ///
+    /// With `value(t_a) <= baseline` banked, proving `value(t_b) > baseline + delta - 1` forces
+    /// `value(t_b) - value(t_a) >= delta`. The implication holds for EVERY baseline, so the settler's
+    /// freedom to choose one buys them nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn settle_window(
+        ctx: Context<SettleWindow>,
+        ts_b: i64,
+        fixture_summary: ScoresBatchSummary,
+        fixture_proof: Vec<ProofNode>,
+        main_tree_proof: Vec<ProofNode>,
+        stat_b: StatTerm,
+    ) -> Result<()> {
+        let (baseline, delta) = {
+            let m = &ctx.accounts.market;
+            let w = &ctx.accounts.window;
+            require!(m.status == STATUS_OPEN, KernelError::NotOpen);
+            require_keys_eq!(w.market, m.key(), KernelError::WindowMismatch);
+            require!(w.baseline_proven, KernelError::WindowBaselineNotProven);
+            require!(fixture_summary.fixture_id == m.fixture_id, KernelError::FixtureMismatch);
+            require!(stat_b.stat_to_prove.key == m.stat_key, KernelError::StatMismatch);
+            require!(ts_b >= w.baseline_ts, KernelError::WindowOutOfOrder);
+            require!(ts_b / 1000 <= m.expiry_ts, KernelError::Expired);
+            (w.baseline, w.delta)
+        };
+
+        // value(t_b) >= baseline + delta   <=>   value(t_b) > baseline + delta - 1
+        let hi_threshold = baseline
+            .checked_add(delta).ok_or(KernelError::Overflow)?
+            .checked_sub(1).ok_or(KernelError::Overflow)?;
+        let hi = TraderPredicate { threshold: hi_threshold, comparison: Comparison::GreaterThan };
+
+        let txo = ctx.accounts.txoracle_program.to_account_info();
+        let dsr = ctx.accounts.daily_scores_merkle_roots.to_account_info();
+        let moved = prove_stat(&txo, &dsr, ts_b, fixture_summary, fixture_proof, main_tree_proof, hi, stat_b, None, None)?;
+
+        let m = &mut ctx.accounts.market;
+        if moved {
+            m.status = STATUS_SETTLED_YES;
+            m.settle_ts = Clock::get()?.unix_timestamp;
+            if m.yes_total == 0 { m.status = STATUS_VOID; }   // nobody to pay -> refund rather than trap
+            emit!(MarketSettled { market: m.key(), market_id: m.market_id, winning_side: if m.status == STATUS_SETTLED_YES { SIDE_YES } else { 0 }, ts: m.settle_ts });
+            Ok(())
+        } else {
+            err!(KernelError::PredicateNotMet)
+        }
+    }
+
     /// Void an unsettled market once it is past expiry + grace, enabling refunds. The grace window
     /// gives the keeper time to settle a within-window YES first, so a NO staker cannot void a
     /// rightful YES the instant expiry passes.
@@ -607,6 +746,47 @@ pub struct Settle<'info> {
     pub txoracle_program: UncheckedAccount<'info>,
 }
 
+/// K2 — attach a window to a market. One window per market, PDA-derived from it.
+#[derive(Accounts)]
+pub struct OpenWindow<'info> {
+    #[account(mut, address = market.authority @ KernelError::Unauthorized)]
+    pub authority: Signer<'info>,
+    #[account(seeds = [b"market", market.market_id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(init, payer = authority, space = 8 + MarketWindow::INIT_SPACE,
+              seeds = [b"window", market.key().as_ref()], bump)]
+    pub window: Account<'info, MarketWindow>,
+    pub system_program: Program<'info, System>,
+}
+
+/// K2 — bank the proven baseline. Permissionless: the proof decides, not the caller.
+#[derive(Accounts)]
+pub struct ProveWindowBaseline<'info> {
+    pub settler: Signer<'info>,
+    #[account(seeds = [b"market", market.market_id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(mut, seeds = [b"window", market.key().as_ref()], bump = window.bump)]
+    pub window: Account<'info, MarketWindow>,
+    /// CHECK: txoracle's daily_scores_roots PDA; owner-pinned to TXORACLE_ID inside prove_stat.
+    pub daily_scores_merkle_roots: UncheckedAccount<'info>,
+    /// CHECK: must be the txoracle program; enforced against TXORACLE_ID.
+    pub txoracle_program: UncheckedAccount<'info>,
+}
+
+/// K2 — settle a window market. Permissionless, like every other crank: the proofs decide, not the caller.
+#[derive(Accounts)]
+pub struct SettleWindow<'info> {
+    pub settler: Signer<'info>,
+    #[account(mut, seeds = [b"market", market.market_id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(seeds = [b"window", market.key().as_ref()], bump = window.bump)]
+    pub window: Account<'info, MarketWindow>,
+    /// CHECK: txoracle's daily_scores_roots PDA; owner-pinned to TXORACLE_ID inside prove_stat.
+    pub daily_scores_merkle_roots: UncheckedAccount<'info>,
+    /// CHECK: must be the txoracle program; enforced against TXORACLE_ID.
+    pub txoracle_program: UncheckedAccount<'info>,
+}
+
 #[derive(Accounts)]
 pub struct Void<'info> {
     pub cranker: Signer<'info>,
@@ -726,6 +906,22 @@ pub struct SetRake<'info> {
 }
 
 // ───────────────────────── state ─────────────────────────
+/// K2 — a window attached to a market. Kept OUT of `Market` on purpose: adding a field to a live
+/// account type would change its size, and every pool currently holding money would stop deserialising.
+#[account]
+#[derive(InitSpace)]
+pub struct MarketWindow {
+    pub market: Pubkey,
+    pub start_ts: i64,        // unix seconds; the baseline snapshot must be at or after this
+    pub delta: i32,           // how much the stat must move across the window for YES
+    // Two Merkle proofs do not fit in one Solana transaction (1232 bytes), so the baseline is proven
+    // and BANKED first, in its own instruction, and settlement then carries only the second proof.
+    pub baseline: i32,
+    pub baseline_ts: i64,     // milliseconds, as the proof reports it
+    pub baseline_proven: bool,
+    pub bump: u8,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Market {
@@ -820,6 +1016,13 @@ pub enum KernelError {
     #[msg("Proof stat does not match the market")] StatMismatch,
     #[msg("Proof fixture does not match the market")] FixtureMismatch,
     #[msg("Binary expression not allowed for a single-stat market")] BinaryNotAllowed,
+    #[msg("A window cannot be attached after someone has staked")] WindowAfterStake,
+    #[msg("A window needs a delta greater than zero")] BadDelta,
+    #[msg("That window belongs to another market")] WindowMismatch,
+    #[msg("The two snapshots are out of order")] WindowOutOfOrder,
+    #[msg("The earlier snapshot predates the window")] WindowNotStarted,
+    #[msg("The baseline was not proven at the window's start")] WindowBaselineNotProven,
+    #[msg("Only the market authority can do that")] Unauthorized,
     #[msg("Proof snapshot is after the market window (ts > expiry)")] Expired,
     #[msg("Only GreaterThan (monotone over-threshold) markets are supported in v1")] OnlyGreaterThan,
     #[msg("Expiry must be in the future")] BadExpiry,
@@ -842,6 +1045,63 @@ pub enum KernelError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The K2 reduction, as pure arithmetic. `lo`/`hi` are the two predicate thresholds the kernel
+    /// derives from the settler's chosen baseline; `window_yes` says whether both proofs can pass.
+    fn lo_threshold(baseline: i32) -> i32 { baseline + 1 }
+    fn hi_threshold(baseline: i32, delta: i32) -> i32 { baseline + delta - 1 }
+    /// Both CPIs pass iff value_a < lo AND value_b > hi.
+    fn window_yes(value_a: i32, value_b: i32, baseline: i32, delta: i32) -> bool {
+        value_a < lo_threshold(baseline) && value_b > hi_threshold(baseline, delta)
+    }
+
+    #[test]
+    fn window_proof_implies_the_delta_for_every_baseline() {
+        // If both proofs pass, the move really was at least `delta` — whatever baseline was chosen.
+        for delta in 1..4 {
+            for baseline in -2..6 {
+                for a in 0..6 {
+                    for b in 0..8 {
+                        if window_yes(a, b, baseline, delta) {
+                            assert!(b - a >= delta, "b={} a={} baseline={} delta={}", b, a, baseline, delta);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_real_move_is_always_provable_by_some_baseline() {
+        // And the honest settler can always find one: b = value_a.
+        for delta in 1..4 {
+            for a in 0..6 {
+                let b = a + delta;
+                assert!(window_yes(a, b, a, delta), "a={} b={} delta={}", a, b, delta);
+            }
+        }
+    }
+
+    #[test]
+    fn a_move_that_did_not_happen_cannot_be_proven_by_any_baseline() {
+        // One short of the delta: no baseline in a wide range makes both proofs pass.
+        for delta in 1..4 {
+            for a in 0..6 {
+                let b = a + delta - 1;
+                for baseline in -8..12 {
+                    assert!(!window_yes(a, b, baseline, delta), "a={} b={} baseline={} delta={}", a, b, baseline, delta);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_goal_before_the_window_does_not_count() {
+        // The window opened at a=1 (a goal already on the board). Nothing more is scored: b stays 1.
+        assert!(!window_yes(1, 1, 1, 1));
+        // One is then scored inside the window.
+        assert!(window_yes(1, 2, 1, 1));
+    }
 
     #[test]
     fn comparison_from_u8_maps_the_three_valid_codes() {

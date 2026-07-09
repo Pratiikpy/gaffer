@@ -39,8 +39,12 @@ export async function cached<T>(key: string, opts: CacheOpts, fn: () => Promise<
   }
 
   // Someone is already fetching this exact key — wait for them rather than starting a second one.
-  const flying = inflight.get(key) as Promise<T> | undefined;
-  if (flying) return flying;
+  // Belt and braces: if that in-flight work somehow yields nothing, fetch rather than return `undefined`.
+  const flying = inflight.get(key) as Promise<T | undefined> | undefined;
+  if (flying) {
+    const v = await flying;
+    if (v !== undefined) return v;
+  }
 
   const p = (async () => {
     try {
@@ -61,13 +65,27 @@ export async function cached<T>(key: string, opts: CacheOpts, fn: () => Promise<
   return p;
 }
 
-/** Refresh a key in the background. A failed background refresh is silent: the stale value still stands,
- * and the next foreground miss will surface the error properly. */
-function refresh<T>(key: string, fn: () => Promise<T>): Promise<void> {
+/** Refresh a key in the background.
+ *
+ * It MUST resolve to the value, not to void: a background refresh is parked in the same `inflight` map
+ * that single-flight readers await, so a `Promise<void>` here hands `undefined` to any request that
+ * arrives mid-refresh. That is exactly how the Frozen Window poll started returning 500s — the route
+ * tried to serialise `undefined`. A failed background refresh stays silent and keeps the stale value;
+ * the next foreground miss surfaces the error properly.
+ */
+function refresh<T>(key: string, fn: () => Promise<T>): Promise<T | undefined> {
   const p = (async () => {
-    try { const value = await fn(); store.set(key, { at: Date.now(), value }); }
-    catch { /* keep the stale value; do not cache the failure */ }
-    finally { inflight.delete(key); }
+    try {
+      const value = await fn();
+      store.set(key, { at: Date.now(), value });
+      return value;                                   // readers awaiting this must get the VALUE
+    } catch {
+      // Keep the stale value; do not cache the failure. Hand waiters what we still have, so a
+      // background blip degrades to "slightly old" rather than to `undefined`.
+      return (store.get(key) as Entry<T>)?.value;
+    } finally {
+      inflight.delete(key);
+    }
   })();
   inflight.set(key, p as Promise<unknown>);
   return p;

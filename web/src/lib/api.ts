@@ -42,6 +42,12 @@ export async function streakGrid(user: string): Promise<{ cells: ("hit" | "freez
   return r.ok ? await r.json() : null;
 }
 
+/** Q8 — matches with a real, finished tick stream that can carry a Mystery run. */
+export async function mysteryList(): Promise<{ fixtureId: number; home: string; away: string }[]> {
+  const r = await fetch("/api/mystery/list", { cache: "no-store" });
+  return r.ok ? (await r.json()).matches || [] : [];
+}
+
 /** L5/L7/L8 — the live pulse of a match: clock, halftime, whether the market has gone quiet, your open
  * call, and whether the one-per-matchday move is available right now. */
 export type LivePulse = {

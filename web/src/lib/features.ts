@@ -20,5 +20,5 @@ export const GAMES: Game[] = [
   { id: "calledshot", name: "Called Shot", blurb: "Seal a one-liner. Opened only if you called it right.", status: "live", tab: "squad" },
   { id: "fansvsmarket", name: "Fans vs the Market", blurb: "The room's call vs the live market — pick the gap.", status: "live", tab: "today" },
   { id: "bracket", name: "The knockout board", blurb: "Every match as it goes live and finishes — the whole tournament at a glance.", status: "live", tab: "today" },
-  { id: "mystery", name: "Relive a match", blurb: "Any finished game replayed as a 3-minute drama run.", status: "soon", tab: "today" },
+  { id: "mystery", name: "Relive a match", blurb: "Any finished game replayed as a 3-minute drama run. No names until the end.", status: "live", tab: "today" },
 ];

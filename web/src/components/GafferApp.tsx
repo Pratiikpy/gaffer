@@ -5,7 +5,8 @@ import { BrowserParlay } from "@/lib/parlayClient";
 import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
-import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse } from "@/lib/api";
+import MysteryMatch from "./MysteryMatch";
+import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
@@ -122,7 +123,9 @@ export default function GafferApp() {
   const [stake, setStake] = useState(0.05);
   const [shot, setShot] = useState(""); // optional sealed "Called Shot" one-liner (S2), revealed only if the call lands
   const [reason, setReason] = useState(""); // S5 — the written reason, shown on the call so a copy is never blind
-  const [ambient, setAmbient] = useState(false); // L4 glanceable full-screen match view
+  const [ambient, setAmbient] = useState(false);
+  // Q8 — the Mystery Match run (a finished fixture, replayed anonymously from the real tick stream).
+  const [mystery, setMystery] = useState<number | null>(null); // L4 glanceable full-screen match view
   const [paid, setPaid] = useState<{ amount: number; q: string; sig?: string; when: string; calledAt?: number | null; staked?: number; mult?: number | null } | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [streak, setStreak] = useState(0);
@@ -578,7 +581,7 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
@@ -625,6 +628,15 @@ export default function GafferApp() {
         />
       )}
       {ambient && <AmbientView fixtureId={selectedFixture} positions={positions} onClose={() => setAmbient(false)} />}
+      {mystery != null && (
+        <MysteryMatch
+          fixtureId={mystery}
+          userId={userId}
+          token={typeof window !== "undefined" ? localStorage.getItem("gaffer_ptoken") || "" : ""}
+          onClose={() => { setMystery(null); refreshPoints(); refreshEcon(); }}
+          onPoints={() => { refreshPoints(); refreshEcon(); }}
+        />
+      )}
       {!ambient && !paid && tab === "today" && <button onClick={() => setAmbient(true)} className="fixed bottom-40 left-3 z-30 w-10 h-10 rounded-full bg-[var(--ink)] text-white flex items-center justify-center shadow-lg" aria-label="Ambient mode">⛶</button>}
       {paid && <PaidOverlay paid={paid} close={() => setPaid(null)} flash={flash} econ={econ} />}
       {milestone != null && (
@@ -843,7 +855,7 @@ function TheWake({ nation }: { nation: string }) {
 /** Match recap (G4/T5) — the real full-time score + a stat, derived from the same event feed the kernel
  * settles on (Stats[1]=home goals, [2]=away, [7/8]=corners). A reason to open between matches; renders
  * only when there's usable data (never a fabricated scoreline). */
-function MatchRecap({ fixtureId, home, away }: { fixtureId: number; home: string; away: string }) {
+function MatchRecap({ fixtureId, home, away, onRelive }: { fixtureId: number; home: string; away: string; onRelive?: (id: number) => void }) {
   const [s, setS] = useState<any>(null);
   useEffect(() => { let live = true; setS(null); fetch(`/api/scores/${fixtureId}`).then((r) => r.json()).then((x) => { if (live) setS(x); }).catch(() => {}); return () => { live = false; }; }, [fixtureId]);
   const last = s?.recent?.length ? s.recent[s.recent.length - 1]?.Stats : null;
@@ -859,6 +871,12 @@ function MatchRecap({ fixtureId, home, away }: { fixtureId: number; home: string
         <span className="flex items-center gap-2 flex-1"><Flag name={away} size={20} round /><span className="font-bold leading-tight">{away}</span></span>
       </div>
       <div className="mono text-[10px] text-[var(--muted)] text-center mt-2.5">corners {hc}–{ac} · settled on the real feed</div>
+      {/* Q8 — replay it anonymised, as a three-minute drama run off the same tick stream. */}
+      {onRelive && (
+        <button onClick={() => onRelive(fixtureId)} className="mt-3 w-full py-2.5 rounded-xl border-2 border-[var(--line)] font-bold text-sm active:scale-[0.99] transition-transform">
+          Relive it — no names, 3 minutes
+        </button>
+      )}
     </div>
   );
 }
@@ -943,13 +961,13 @@ function MarketRead({ fixtureId, home, away }: { fixtureId: number; home: string
 
 /** The Play hub (§12.2) — every game as a state-card, rendered from the single feature registry
  * (features.ts). Live games deep-link to their tab; unbuilt ones show "soon" and can't be tapped. */
-function PlayHub({ onGo }: { onGo: (tab: string) => void }) {
+function PlayHub({ onGo, onRelive, reliveId }: { onGo: (tab: string) => void; onRelive?: (id: number) => void; reliveId?: number | null }) {
   return (
     <div className="mt-6">
       <div className="mono text-[10px] tracking-widest uppercase text-[#9CA3AF] mb-2">More ways to play</div>
       <div className="grid grid-cols-2 gap-2">
         {GAMES.map((g) => (
-          <button key={g.id} disabled={g.status === "soon"} onClick={() => g.status === "live" && onGo(g.tab)} className={`text-left rounded-2xl p-3.5 border ${g.status === "live" ? "bg-white border-[var(--line)] active:scale-[0.98] transition-transform" : "bg-[#FAFAF7] border-dashed border-[var(--line)] opacity-70 cursor-default"}`}>
+          <button key={g.id} disabled={g.status === "soon" || (g.id === "mystery" && !reliveId)} onClick={() => g.status === "live" && (g.id === "mystery" ? (reliveId && onRelive?.(reliveId)) : onGo(g.tab))} className={`text-left rounded-2xl p-3.5 border ${g.status === "live" ? "bg-white border-[var(--line)] active:scale-[0.98] transition-transform" : "bg-[#FAFAF7] border-dashed border-[var(--line)] opacity-70 cursor-default"}`}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-bold leading-tight">{g.name}</span>
               {g.status === "live" ? <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] shrink-0" /> : <span className="mono text-[8px] tracking-widest uppercase text-[var(--muted)] shrink-0">soon</span>}
@@ -1277,11 +1295,16 @@ function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () =
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName }: any) {
+function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => { const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 10000); return () => clearInterval(t); }, []);
+  // Q8 — "any finished game", not just one still on today's slate. The server reports which fixtures
+  // actually have a finished tick stream to run.
+  const [replayable, setReplayable] = useState<{ fixtureId: number; home: string; away: string }[]>([]);
+  useEffect(() => { mysteryList().then(setReplayable).catch(() => {}); }, []);
+  const latestFinished: number | null = replayable.length ? replayable[0].fixtureId : null;
   const onFixture = (m: MarketView) => !selectedFixture || Number(m.fixtureId) === selectedFixture;
   const open = markets.filter((m: MarketView) => m.status === 0 && Number(m.lockTs) > nowSec && realMarket(m) && onFixture(m));
   // "Ready to collect" shows only settled pools YOU were in and can still collect.
@@ -1319,7 +1342,7 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
       <MysterySlot econ={econ} onPlay={onPlayMystery} busy={econBusy} />
       {selectedFixture && <MarketRead fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
       {selectedFixture && <DramaMeter fixtureId={selectedFixture} />}
-      {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} /> : null; })()}
+      {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} onRelive={onRelive} /> : null; })()}
 
       {DEV && <button disabled={busy === "spin"} onClick={() => spinUp(selectedFixture)} className="mt-4 w-full h-12 rounded-2xl border-2 border-dashed border-[var(--line)] text-[var(--muted)] font-semibold disabled:opacity-50">{busy === "spin" ? "Spinning up…" : `+ Spin up a pool (${selName})`}</button>}
 
@@ -1370,7 +1393,7 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
       ))}
 
       <KnockoutBoard fixtures={fixtures} onSelect={onSelectFixture} />
-      <PlayHub onGo={onGo} />
+      <PlayHub onGo={onGo} onRelive={onRelive} reliveId={latestFinished} />
     </div>
   );
 }

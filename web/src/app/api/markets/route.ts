@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listMarkets } from "@/lib/kernel";
 import { fixtureNames } from "@/lib/fixtureNames";
+import { cached } from "@/lib/cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,9 @@ export const dynamic = "force-dynamic";
  * itself truthfully instead of falling back to "Home v Away" (audit #7). */
 export async function GET() {
   try {
-    const markets = await listMarkets();
+    // K7 — a room of fans all poll this at once. Coalesce them into one getProgramAccounts, and keep
+    // serving the last good list through an RPC blip rather than showing everyone an error.
+    const markets = await cached("markets", { ttlMs: 3000, swrMs: 30_000, staleMs: 60_000 }, listMarkets);
     const names = await fixtureNames(markets.map((m: any) => m.fixtureId)).catch(() => ({} as Record<string, { home: string; away: string }>));
     const withNames = markets.map((m: any) => {
       const n = names[String(m.fixtureId)];

@@ -12,10 +12,12 @@
     "migrate": "node scripts/migrate.mjs",
     "test:economy": "node scripts/test-economy.mjs",
     "test:live": "node scripts/test-live.mjs",
-    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs && node scripts/test-shells.mjs",
+    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs && node scripts/test-shells.mjs && node scripts/test-push.mjs",
     "test:squad": "node scripts/test-squad.mjs",
     "test:draft": "node scripts/test-draft.mjs",
-    "test:shells": "node scripts/test-shells.mjs"
+    "test:shells": "node scripts/test-shells.mjs",
+    "test:push": "node scripts/test-push.mjs",
+    "loadtest": "node scripts/loadtest.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

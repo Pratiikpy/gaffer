@@ -9,6 +9,7 @@ import { db } from "./db";
 import { txline } from "./txline";
 import { tokenOk, grantFrozenWin } from "./points";
 import { pushSquad } from "./push";
+import { cached } from "./cache";
 
 const LOCK_MS = 20_000;      // 20s judge-grace window to call before entry locks (KILL-1 discipline)
 const FREEZE_MS = 45_000;    // review window: 20s to call, then ~25s of sweat (real reviews avg 3m12s;
@@ -53,23 +54,22 @@ function roomOf(r: any, now: number, realTally: Record<string, number>): { prese
 
 /** Total goals on the board right now (Stats keys 1 + 2 across the latest event). Cached briefly so
  * opening/settling a round doesn't pay the full historical-stream fetch every time. */
-const goalCache = new Map<number, { at: number; v: { total: number; g1: number; g2: number } }>();
 async function currentGoals(fixtureId: number): Promise<{ total: number; g1: number; g2: number }> {
-  const hit = goalCache.get(fixtureId);
-  if (hit && Date.now() - hit.at < 20000) return hit.v;
-  try {
+  // Single-flighted: a whole squad settling the same round must not each fetch the stream.
+  return cached(`goals:${fixtureId}`, { ttlMs: 20_000, swrMs: 60_000, staleMs: 120_000 }, async () => {
     const evs = await txline().historicalEvents(fixtureId);
     const last = evs[evs.length - 1];
     const g1 = Number(last?.Stats?.[1] || 0), g2 = Number(last?.Stats?.[2] || 0);
-    const v = { total: g1 + g2, g1, g2 };
-    goalCache.set(fixtureId, { at: Date.now(), v });
-    return v;
-  } catch { return hit?.v || { total: 0, g1: 0, g2: 0 }; }
+    return { total: g1 + g2, g1, g2 };
+  }).catch(() => ({ total: 0, g1: 0, g2: 0 }));
 }
 
 /** The crowd's belief for the leading side, from the live consensus 1X2 line — the sweat strip's number.
  * Real when a match is live; null when the market is quiet (finished/no odds) — never fabricated. */
 async function sweatPct(fixtureId: number): Promise<number | null> {
+  return cached(`sweat:${fixtureId}`, { ttlMs: 5_000, swrMs: 30_000, staleMs: 60_000 }, () => readSweatPct(fixtureId)).catch(() => null);
+}
+async function readSweatPct(fixtureId: number): Promise<number | null> {
   try {
     const lines = await txline().oddsSnapshot(fixtureId);
     const x = lines.find((o: any) => o.SuperOddsType === "1X2_PARTICIPANT_RESULT" && Array.isArray(o.Pct));
@@ -94,7 +94,7 @@ export async function openFreeze(fixtureId: number, squadCode: string | null, un
             ${now}, ${now + LOCK_MS}, ${now + FREEZE_MS}, ${baseline}, 'open',
             ${JSON.stringify(seed != null ? [{ t: now, pct: seed }] : [])}::jsonb, ${note || (g1 > baseline ? "Home have it in the net." : "It's on the board.")})`;
   // The synchronized ping: everyone in the squad gets buzzed the instant the window opens.
-  if (squadCode) await pushSquad(squadCode, { title: "⚡ The Freeze is live", body: "Goal under review — 20s to call it. Does it stand?", url: "/", tag: "freeze" });
+  if (squadCode) await pushSquad(squadCode, { title: "⚡ The Freeze is live", body: "Goal under review — 20s to call it. Does it stand?", url: "/", tag: `freeze:${id}` }, undefined, `fixture:${fixtureId}`, "B");
   return (await getRound(id))!;
 }
 
@@ -107,7 +107,7 @@ export async function openBlackout(fixtureId: number, squadCode: string | null, 
   await db()`INSERT INTO rounds (id, fixture_id, squad_code, kind, question, options, opened_at, locks_at, settles_at, baseline, state, sweat, note)
     VALUES (${id}, ${fixtureId}, ${squadCode}, 'blackout', ${"…the market went quiet. Call it."}, ${JSON.stringify(["HOME GOAL", "AWAY GOAL", "NO GOAL"])}::jsonb,
             ${now}, ${now + LOCK_MS}, ${now + BLACKOUT_MS}, ${g1 * 100 + g2}, 'open', '[]'::jsonb, ${note || "Ten seconds — what happens next?"})`;
-  if (squadCode) await pushSquad(squadCode, { title: "… Blackout", body: "The market just went quiet. Call what happens next.", url: "/", tag: "blackout" });
+  if (squadCode) await pushSquad(squadCode, { title: "… Blackout", body: "The market just went quiet. Call what happens next.", url: "/", tag: `blackout:${id}` }, undefined, `fixture:${fixtureId}`, "B");
   return (await getRound(id))!;
 }
 
@@ -165,7 +165,7 @@ export async function settleRound(roundId: string): Promise<RoundView | null> {
 
       // Q4 — the reveal lands on every member's screen at the same instant, paced, not a silent ticker.
       const { pushSquad } = await import("./push");
-      await pushSquad(r.squad_code, { title, body: detail, url: "/", tag: `lore:${roundId}` }).catch(() => {});
+      await pushSquad(r.squad_code, { title, body: detail, url: "/", tag: `lore:${roundId}` }, undefined, `fixture:${r.fixture_id}`, "B").catch(() => {});
     } catch { /* lore and the buzz are decoration; a settle must never fail because of them */ }
   }
   return getRound(roundId);
@@ -251,13 +251,16 @@ const blackoutCheck = new Map<string, number>();
 
 /** Read the newest odds MessageId for a fixture, or null when the book is quoting nothing at all. */
 async function latestOddsMessage(fixtureId: number): Promise<string | null> {
-  try {
-    const { txline } = await import("./txline");
-    const rows: any[] = await txline().oddsSnapshot(fixtureId);
-    if (!rows?.length) return null;
-    const id = rows[0]?.MessageId ?? rows[0]?.messageId;
-    return id ? String(id) : null;
-  } catch { return null; }
+  // Single-flighted: every phone in the window asks for this at the same second.
+  return cached(`oddsmsg:${fixtureId}`, { ttlMs: 3_000, swrMs: 20_000, staleMs: 30_000 }, async () => {
+    try {
+      const { txline } = await import("./txline");
+      const rows: any[] = await txline().oddsSnapshot(fixtureId);
+      if (!rows?.length) return null;
+      const id = rows[0]?.MessageId ?? rows[0]?.messageId;
+      return id ? String(id) : null;
+    } catch { return null; }
+  });
 }
 
 /** Pure silence bookkeeping, so the rule can be tested without a live feed:

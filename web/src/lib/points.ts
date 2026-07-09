@@ -28,7 +28,7 @@ export type GrantKind = keyof typeof GRANT;
 export async function grantFrozenWin(userId: string, roundId: string) {
   const granted = await insertGrant(userId, "frozen_win", `frozen:${roundId}`);
   // Only ping on a NET-NEW grant (idempotent key already claimed → no duplicate buzz).
-  if (granted) { const { pushUser } = await import("./push"); await pushUser(userId, { title: "🟢 You read it right", body: "The window went your way — +40 points banked.", url: "/", tag: "frozenwin" }).catch(() => {}); }
+  if (granted) { const { pushUser } = await import("./push"); await pushUser(userId, { title: "🟢 You read it right", body: "The window went your way — +40 points banked.", url: "/", tag: `frozenwin:${roundId}` }, `round:${roundId}`, "A").catch(() => {}); }
   return granted;
 }
 

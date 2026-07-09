@@ -32,6 +32,20 @@ const statements = [
   // when a pick may be revealed. Concealing only in the UI would leave the side in the response body.
   `ALTER TABLE feed ADD COLUMN IF NOT EXISTS lock_ts bigint`,
 
+  // K6 — the push budget. A notification ledger, so "at most four pushes a match" is a fact the server
+  // can enforce rather than a promise in a doc. 95% of push-silent opt-ins churn; so does everyone you
+  // buzz about a match they have no stake in.
+  `CREATE TABLE IF NOT EXISTS push_log (
+     id bigserial PRIMARY KEY,
+     user_id text NOT NULL,
+     scope text NOT NULL,               -- the match (or 'global') this push belongs to
+     tag text NOT NULL,                 -- dedupe key: the same beat is never sent twice
+     class text NOT NULL DEFAULT 'B',   -- A = you won (always allowed) | B = budgeted
+     ts bigint NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS push_log_user_scope_idx ON push_log (user_id, scope)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS push_log_dedupe ON push_log (user_id, tag)`,
+
   // Q7 — The Round Table: a per-round snake draft of surviving nations on a shared clock. Draft night
   // is what sustains a 25-year league; the dark days between rounds are dead air the product can own.
   `CREATE TABLE IF NOT EXISTS drafts (

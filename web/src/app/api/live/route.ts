@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
             title: "Halftime",
             body: "45 minutes left. Stick with your call, or twist it.",
             url: "/", tag: `ht:${fixture}`,
-          });
+          }, undefined, `fixture:${fixture}`, "B");
         } catch { /* push is best-effort; the beat still shows in-app */ }
       }, HT_BEAT_MS);
     }

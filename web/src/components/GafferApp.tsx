@@ -6,6 +6,7 @@ import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
 import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
+import { canInstall, onInstallable, promptInstall, isIOS, isStandalone, setBadge } from "@/lib/install";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
 import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList } from "@/lib/api";
@@ -281,6 +282,14 @@ export default function GafferApp() {
   // A milestone is returned exactly once (the server banks it) — mint its share card the moment it lands.
   const [milestone, setMilestone] = useState<number | null>(null);
   useEffect(() => { if (econ?.milestoneReached) setMilestone(econ.milestoneReached); }, [econ?.milestoneReached]);
+  // K6 — the quiet notification: how many wins are sitting there waiting to be collected.
+  useEffect(() => {
+    const collectable = positions.filter((p: any) => {
+      const m = markets.find((x: MarketView) => x.pubkey === p.market);
+      return m && !p.claimed && p.amount > 0 && ((m.status === 1 && p.side === 1) || m.status === 2);
+    }).length;
+    setBadge(collectable);
+  }, [positions, markets]);
 
   // T3 — the wager and the one-time Earn-Back repair. Both are point SPENDS, so both go through the
   // token-guarded economy route; the client never adjusts a total itself.
@@ -1755,6 +1764,29 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
   );
 }
 
+/** K6 — Add to Home Screen. On iOS there is no prompt event, so we say how rather than showing a button
+ * that cannot work. Once installed the card disappears entirely — it has nothing left to say. */
+function InstallCard() {
+  const [can, setCan] = useState(false);
+  const [installed, setInstalled] = useState(false);
+  useEffect(() => { setInstalled(isStandalone()); return onInstallable(setCan); }, []);
+  if (installed) return null;
+
+  if (isIOS()) return (
+    <div className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4">
+      <div className="font-bold text-[15px]">Add GAFFER to your home screen</div>
+      <div className="text-[12px] text-[var(--muted)] mt-0.5">Tap Share, then “Add to Home Screen”. Alerts only work once it&apos;s installed.</div>
+    </div>
+  );
+  if (!can) return null;
+  return (
+    <div className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4 flex items-center justify-between gap-3">
+      <div><div className="font-bold text-[15px]">Add to home screen</div><div className="text-[12px] text-[var(--muted)] mt-0.5">Opens like an app, and alerts start working.</div></div>
+      <button onClick={() => promptInstall()} className="px-3 h-10 rounded-xl bg-[var(--ink)] text-white text-sm font-bold shrink-0">Add</button>
+    </div>
+  );
+}
+
 /** Q1 — the side you took, worn beside your name. Twitch's lesson: a visible side is what lets the room
  * call each other out, and it's what turns a prediction into an inside joke. */
 function SideBadge({ side }: { side: number | undefined }) {
@@ -2808,6 +2840,9 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
           <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${muted ? "left-6" : "left-1"}`} />
         </button>
       </div>
+      {/* K6 — install to home screen. A PWA that is never installed never gets a push. */}
+      <InstallCard />
+
       {/* C5 — the money sound. Off by default: an app that makes noise unasked gets muted forever. */}
       <div className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4 flex items-center justify-between">
         <div><div className="font-bold text-[15px]">Stadium sound</div><div className="text-[12px] text-[var(--muted)] mt-0.5">A short chime the moment a win lands. Nothing else ever makes a sound.</div></div>

@@ -4,7 +4,7 @@ import { Connection, PublicKey, ComputeBudgetProgram } from "@solana/web3.js";
 import idl from "@/lib/latch.idl.json";
 import { KeypairWallet } from "@/lib/wallet";
 import { RPC, TXORACLE } from "@/lib/config";
-import { loadServerKeypair } from "@/lib/serverConfig";
+import { loadServerKeypair, adminOk } from "@/lib/serverConfig";
 import { txline } from "@/lib/txline";
 import { prettyErr } from "@/lib/errcopy";
 import { recordSettle } from "@/lib/economy";
@@ -15,6 +15,28 @@ export const dynamic = "force-dynamic";
 
 const PROGRAM_ID = new PublicKey((idl as any).address);
 const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
+
+/* K5 — per-(fixture, statKey) proof cache. Discovering a proof costs one historicalEvents call plus up
+ * to ten statValidation calls; every market on the same fixture and stat would otherwise repeat all of
+ * it. An anchored proof does not change once found, so it is safe to hold. Misses are cached too, more
+ * briefly, so a fixture with no proof yet doesn't get hammered by a keeper sweeping twenty markets. */
+const HIT_TTL = 10 * 60_000;
+const MISS_TTL = 20_000;
+const proofCache = new Map<string, { at: number; bundle: any | null }>();
+
+async function findProof(fixtureId: number, statKey: number): Promise<any | null> {
+  const key = `${fixtureId}:${statKey}`;
+  const hit = proofCache.get(key);
+  if (hit && Date.now() - hit.at < (hit.bundle ? HIT_TTL : MISS_TTL)) return hit.bundle;
+
+  const events = await txline().historicalEvents(fixtureId);
+  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => b - a);
+  const idxs = [...new Set(Array.from({ length: 10 }, (_, k) => Math.floor((seqs.length - 1) * (k / 9))))];
+  let bundle: any = null;
+  for (const i of idxs) { const b = await txline().statValidation(fixtureId, seqs[i], statKey); if (b) { bundle = b; break; } }
+  proofCache.set(key, { at: Date.now(), bundle });
+  return bundle;
+}
 
 // Settlement is permissionless on-chain — the kernel re-verifies the TxLINE Merkle proof against the
 // oracle's anchored roots, so a bad crank can't settle a market wrongly. Anyone may crank; this route
@@ -29,8 +51,12 @@ function throttled(ip: string): boolean {
 /** Permissionless keeper crank: discover an anchored proof for a market and settle it on-chain. */
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-    if (throttled(ip)) return NextResponse.json({ settled: false, reason: "Easy — one collect at a time." }, { status: 429 });
+    // The throttle exists to bound anonymous fee-spend, not to fight our own keeper: an authenticated
+    // crank is exempt. Anyone may still settle permissionlessly — just not forty times a minute.
+    if (!adminOk(req)) {
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+      if (throttled(ip)) return NextResponse.json({ settled: false, reason: "Easy — one collect at a time." }, { status: 429 });
+    }
     const { market } = await req.json();
     const conn = new Connection(RPC, "confirmed");
     const kp = loadServerKeypair();
@@ -40,11 +66,7 @@ export async function POST(req: NextRequest) {
     if (m.status !== 0) return NextResponse.json({ settled: false, reason: "not open" });
 
     const fixtureId = Number(m.fixtureId);
-    const events = await txline().historicalEvents(fixtureId);
-    const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => b - a);
-    const idxs = [...new Set(Array.from({ length: 10 }, (_, k) => Math.floor((seqs.length - 1) * (k / 9))))];
-    let bundle: any = null;
-    for (const i of idxs) { const b = await txline().statValidation(fixtureId, seqs[i], m.statKey); if (b) { bundle = b; break; } }
+    const bundle = await findProof(fixtureId, m.statKey);   // cached per fixture+stat (K5)
     if (!bundle) return NextResponse.json({ settled: false, reason: "no anchored proof yet" });
 
     const seedTs = Number(bundle.summary.updateStats.minTimestamp);

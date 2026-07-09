@@ -11,6 +11,7 @@
  */
 import "server-only";
 import { txline } from "./txline";
+import { cached } from "./cache";
 
 export const HALF_MS = 45 * 60;                 // seconds
 export const HT_WINDOW: [number, number] = [45 * 60, 50 * 60]; // 2700..3000s — stoppage lives in here
@@ -25,13 +26,13 @@ export type LiveState = {
   secondHalf: boolean;
 };
 
-const cache = new Map<number, { at: number; v: LiveState }>();
-
-/** Read the live state of a fixture. Cached briefly — the Live tab polls, TxLINE must not be hammered. */
+/** Read the live state of a fixture. Single-flighted: a squad polling together must cost ONE feed call,
+ * not one per phone. A stale-but-recent state beats an error while the feed catches its breath. */
 export async function liveState(fixtureId: number): Promise<LiveState> {
-  const hit = cache.get(fixtureId);
-  if (hit && Date.now() - hit.at < 4_000) return hit.v;
+  return cached(`live:${fixtureId}`, { ttlMs: 4_000, swrMs: 30_000, staleMs: 60_000 }, () => readLiveState(fixtureId));
+}
 
+async function readLiveState(fixtureId: number): Promise<LiveState> {
   const empty: LiveState = { fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false };
   let v = empty;
   try {
@@ -53,7 +54,5 @@ export async function liveState(fixtureId: number): Promise<LiveState> {
       v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf };
     }
   } catch { /* feed hiccup — an unknown state is "not at halftime", never a fabricated one */ }
-
-  cache.set(fixtureId, { at: Date.now(), v });
   return v;
 }

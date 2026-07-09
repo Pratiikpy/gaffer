@@ -20,6 +20,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ code
     user ? listDuels(code, user).catch(() => []) : Promise.resolve([]),
   ]);
 
+  // Q9 — "hide picks until lock" has to be enforced HERE. Concealing a side in the UI while shipping it
+  // in the response body is theatre: anyone can read the network tab. A call by someone else, on a pool
+  // that has not reached its cut-off yet, goes out with no side and no reason at all.
+  if (settings?.picksVisible === "after_lock") {
+    const now = Date.now();
+    sq.feed = sq.feed.map((f) => {
+      const locked = f.lockTs != null && now >= f.lockTs;
+      const conceal = (f.kind === "call" || f.kind === "shot") && f.userId !== user && !locked;
+      if (!conceal) return f;
+      const { side, reason, sealed, ...rest } = f;
+      return { ...rest, reactions: f.reactions, concealed: true } as typeof f;
+    });
+  }
+
   // Attach the standing record to each duel, so the card can read "Dev leads Sam 7–4".
   const withRecords = await Promise.all(
     duels.map(async (d) => {

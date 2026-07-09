@@ -17,6 +17,7 @@ export type FeedItem = {
   reactions: Record<string, string[]>;
   sealed?: string | null; revealed?: boolean; shotWin?: boolean | null;
   reason?: string;   // S5 — why the call was made
+  lockTs?: number;   // the pool's cut-off, used to decide when a hidden pick may be revealed
 };
 export type PubSquad = { code: string; name: string; createdAt: number; ownerId: string; members: Record<string, Member>; feed: FeedItem[] };
 
@@ -53,7 +54,7 @@ async function readSquad(code: string): Promise<PubSquad | null> {
     LEFT JOIN LATERAL (SELECT SUM(amount) AS total FROM points_events e WHERE e.user_id = m.user_id) p ON TRUE
     WHERE m.squad_code = ${c}`;
   const frows = await db()`
-    SELECT id, ts, user_id, name, kind, text, market, side, q, reactions, sealed, revealed, shot_win, reason
+    SELECT id, ts, user_id, name, kind, text, market, side, q, reactions, sealed, revealed, shot_win, reason, lock_ts
     FROM feed WHERE squad_code = ${c} ORDER BY ts ASC LIMIT 120`;
   const members: Record<string, Member> = {};
   for (const m of mrows as any[]) members[m.user_id] = {
@@ -66,6 +67,7 @@ async function readSquad(code: string): Promise<PubSquad | null> {
     reactions: f.reactions || {},
     sealed: f.sealed ?? undefined, revealed: f.revealed ?? undefined, shotWin: f.shot_win,
     reason: f.reason ?? undefined,   // S5 — the written reason, so Copy-a-Call is never blind
+    lockTs: f.lock_ts == null ? undefined : Number(f.lock_ts),
   }));
   return { code: sq[0].code, name: sq[0].name, ownerId: sq[0].owner_id, createdAt: Number(sq[0].created_at), members, feed };
 }
@@ -124,11 +126,11 @@ export async function postMessage(code: string, userId: string, name: string, te
   return readSquad(c);
 }
 
-export async function recordCall(code: string, userId: string, name: string, market: string, side: number, q: string, sealed?: string, reason?: string): Promise<PubSquad | null> {
+export async function recordCall(code: string, userId: string, name: string, market: string, side: number, q: string, sealed?: string, reason?: string, lockTs?: number): Promise<PubSquad | null> {
   const c = code?.toUpperCase();
   const kind = sealed ? "shot" : "call";
   // `reason` (S5) is the one line explaining WHY — it rides with the call so Copy-a-Call is never blind.
-  await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text, market, side, q, sealed, reason) VALUES (${uid()}, ${c}, ${Date.now()}, ${cleanId(userId)}, ${clamp(name, 24)}, ${kind}, '', ${cleanMarket(market)}, ${cleanSide(side)}, ${clamp(q || "", 80)}, ${sealed ? clamp(sealed, 140) : null}, ${reason ? clamp(reason, 120) : null})`;
+  await db()`INSERT INTO feed (id, squad_code, ts, user_id, name, kind, text, market, side, q, sealed, reason, lock_ts) VALUES (${uid()}, ${c}, ${Date.now()}, ${cleanId(userId)}, ${clamp(name, 24)}, ${kind}, '', ${cleanMarket(market)}, ${cleanSide(side)}, ${clamp(q || "", 80)}, ${sealed ? clamp(sealed, 140) : null}, ${reason ? clamp(reason, 120) : null}, ${Number.isFinite(lockTs) ? Math.round(lockTs!) : null})`;
   return readSquad(c);
 }
 

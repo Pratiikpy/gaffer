@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       case "post": squad = await postMessage(b.code, b.userId, b.name, b.text); break;
       // A recorded call may carry a sealed Called Shot line (item 15) and the written reason behind it
       // (S5 — Copy-a-Call is never a blind clone). Points are NEVER taken from the body.
-      case "call": squad = await recordCall(b.code, b.userId, b.name, b.market, b.side, b.q, b.sealed, b.reason); break;
+      case "call": squad = await recordCall(b.code, b.userId, b.name, b.market, b.side, b.q, b.sealed, b.reason, Number(b.lockTs) || undefined); break;
       case "react": squad = await react(b.code, b.msgId, b.emoji, b.userId); break;
       // sync only touches the caller's own profile (name/nation); points/streak are server-authoritative.
       case "sync": squad = await syncMember(b.code, b.userId, b.patch || {}); break;

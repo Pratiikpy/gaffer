@@ -121,6 +121,7 @@ export default function GafferApp() {
   const [detail, setDetail] = useState<MarketView | null>(null);
   const [stake, setStake] = useState(0.05);
   const [shot, setShot] = useState(""); // optional sealed "Called Shot" one-liner (S2), revealed only if the call lands
+  const [reason, setReason] = useState(""); // S5 — the written reason, shown on the call so a copy is never blind
   const [ambient, setAmbient] = useState(false); // L4 glanceable full-screen match view
   const [paid, setPaid] = useState<{ amount: number; q: string; sig?: string; when: string; calledAt?: number | null; staked?: number; mult?: number | null } | null>(null);
   const [toast, setToast] = useState<Toast>(null);
@@ -409,8 +410,8 @@ export default function GafferApp() {
       // S1/T1 — bank the stamp server-side, anchored to the odds message that existed at this instant.
       // localStorage above is only an offline echo; the receipt reads the server's copy.
       economyDo("stamp", { userId, token: pTok(), market: sheet.m.pubkey, side: sheet.side === 1 ? "yes" : "no", calledAt: share, fixtureId: Number(sheet.m.fixtureId) || 0 });
-      if (squadCode) squadApi("call", { code: squadCode, userId, token: sqTok(), name: userName, market: sheet.m.pubkey, side: sheet.side, q: label(sheet.m).q, sealed: shot.trim() || undefined }).then((r) => r?.squad && setSquadData(r.squad));
-      setShot(""); // clear the sealed line once it's ridden along with the call
+      if (squadCode) squadApi("call", { code: squadCode, userId, token: sqTok(), name: userName, market: sheet.m.pubkey, side: sheet.side, q: label(sheet.m).q, sealed: shot.trim() || undefined, reason: reason.trim() || undefined, lockTs: Number(sheet.m.lockTs) * 1000 || undefined }).then((r) => r?.squad && setSquadData(r.squad));
+      setShot(""); setReason(""); // clear the sealed line + reason once they've ridden along with the call
       // In-context success: the sheet flips to "you're riding X" for a beat, then closes (audit #2 — never a silent close).
       setStaked({ side: sheet.side, amt: stake });
       setTimeout(() => { setStaked(null); setSheet(null); }, 1500);
@@ -612,7 +613,7 @@ export default function GafferApp() {
         ))}
       </nav>
 
-      {sheet && <CallSheet sheet={sheet} setSheet={setSheet} stake={stake} setStake={setStake} doStake={doStake} busy={busy} done={staked} shot={shot} setShot={setShot} canSeal={!!squadCode} />}
+      {sheet && <CallSheet sheet={sheet} setSheet={setSheet} stake={stake} setStake={setStake} doStake={doStake} busy={busy} done={staked} shot={shot} setShot={setShot} reason={reason} setReason={setReason} canSeal={!!squadCode} />}
       {detail && <PoolDetail m={detail} close={() => setDetail(null)} setSheet={setSheet} settle={settle} claim={claim} busy={busy} kernel={kernel} cfg={cfg} flash={flash} />}
       {(frozenActive || frozenReveal) && (
         <FrozenWindow
@@ -1431,7 +1432,7 @@ function Card({ m, label, children, onOpen }: any) {
 
 function Section({ title }: { title: string }) { return <div className="mono text-[10px] tracking-widest uppercase text-[#9CA3AF] mt-6 mb-2">{title}</div>; }
 
-function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot, setShot, canSeal }: any) {
+function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot, setShot, reason, setReason, canSeal }: any) {
   if (done) return (
     <div className="fixed inset-0 z-30 bg-black/40 flex items-end">
       <div className="w-full max-w-[440px] mx-auto bg-white rounded-t-3xl p-6 pb-10 gf-pop text-center">
@@ -1477,6 +1478,13 @@ function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot
             </div>
           </>
         ); })()}
+        {/* S5 — the reason rides with the call, so a mate copying it is never copying blind. */}
+        {canSeal && (
+          <div className="mt-4">
+            <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF] mb-1.5">Why? <span className="text-[var(--muted)] normal-case tracking-normal">· your squad sees it on the call</span></div>
+            <input value={reason} onChange={(e) => setReason(e.target.value.slice(0, 120))} placeholder="Their keeper is shaky on crosses." className="w-full h-11 rounded-xl border border-[var(--line)] px-3.5 bg-[#FAFAF7] text-sm" />
+          </div>
+        )}
         {canSeal && (
           <div className="mt-4">
             <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF] mb-1.5">Seal a Called Shot <span className="text-[var(--muted)] normal-case tracking-normal">· opened only if you&apos;re right</span></div>
@@ -1712,6 +1720,18 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
         <button onClick={close} className="flex-1 py-3.5 rounded-2xl bg-white text-[#047857] font-bold">Done</button>
       </div>
     </div>
+  );
+}
+
+/** Q1 — the side you took, worn beside your name. Twitch's lesson: a visible side is what lets the room
+ * call each other out, and it's what turns a prediction into an inside joke. */
+function SideBadge({ side }: { side: number | undefined }) {
+  if (side !== 1 && side !== 2) return null;
+  const yes = side === 1;
+  return (
+    <span className={`mono text-[9px] font-extrabold tracking-widest rounded px-1.5 py-0.5 shrink-0 ${yes ? "bg-[var(--green)] text-white" : "bg-[var(--ink)] text-white"}`}>
+      {yes ? "YES" : "NO"}
+    </span>
   );
 }
 
@@ -1987,22 +2007,40 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
       <div className="space-y-2">
         {[...sq.feed].reverse().map((f: any) => {
           if (f.kind === "system") return <div key={f.id} className="text-center mono text-[10px] text-[#9CA3AF] py-1">— {f.text} —</div>;
-          if (f.kind === "call") return (
-            <div key={f.id} className="bg-white border border-[var(--line)] rounded-xl p-3">
-              <div className="text-sm"><b>{f.name}</b> backed <span className={f.side === 1 ? "text-[var(--green)] font-bold" : "font-bold"}>{f.side === 1 ? "YES" : "NO"}</span> · {f.q}?</div>
-              {f.userId !== userId && (() => {
-                // Copy-a-Call depth (S5): tail count so a follow is considered, not blind. Fade (S6) puts
-                // you on the OTHER side and starts a named H2H duel.
-                const tail = sq.feed.filter((x: any) => x.kind === "call" && x.market === f.market && x.side === f.side).length;
-                return (
-                  <div className="mt-2 flex gap-2">
-                    <button onClick={() => copyCall(f.market, f.side)} className="h-8 px-3 rounded-lg bg-[var(--ink)] text-white text-xs font-bold">Copy this call{tail > 1 ? ` · ${tail} on it` : ""}</button>
-                    <button onClick={() => fadeDuel(f)} className="h-8 px-3 rounded-lg bg-white border border-[var(--ink)] text-xs font-bold">Fade {f.name}</button>
-                  </div>
-                );
-              })()}
-            </div>
-          );
+          if (f.kind === "call") {
+            // Q9 — when the commissioner hides picks until lock, someone else's call shows WHO called,
+            // never WHAT they called. Hiding the copy button while leaving the side on screen would be
+            // theatre. Your own call is always visible to you.
+            const mine = f.userId === userId;
+            // The SERVER decides what we may see: a concealed call arrives with no side and no reason.
+            const concealed = !!f.concealed;
+            return (
+              <div key={f.id} className="bg-white border border-[var(--line)] rounded-xl p-3">
+                <div className="flex items-center gap-1.5 text-sm">
+                  <b>{f.name}</b>
+                  {/* Q1 — the side you took, worn next to your name for the whole match. */}
+                  {concealed
+                    ? <span className="mono text-[9px] font-extrabold tracking-widest rounded px-1.5 py-0.5 bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)] shrink-0">SEALED</span>
+                    : <SideBadge side={f.side} />}
+                  <span className="text-[var(--muted)] truncate">{f.q}?</span>
+                </div>
+                {/* S5 — why they called it. Copying is a decision, not a reflex. */}
+                {!concealed && f.reason && <div className="mt-1 text-[12px] text-[var(--muted)] italic">“{f.reason}”</div>}
+                {concealed && <div className="mt-1.5 mono text-[10px] uppercase tracking-widest text-[var(--muted)]">Hidden until the lock</div>}
+                {!mine && !concealed && (() => {
+                  // Copy-a-Call depth (S5): tail count so a follow is considered, not blind. Fade (S6) puts
+                  // you on the OTHER side and starts a named H2H duel.
+                  const tail = sq.feed.filter((x: any) => x.kind === "call" && x.market === f.market && x.side === f.side).length;
+                  return (
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => copyCall(f.market, f.side)} className="h-8 px-3 rounded-lg bg-[var(--ink)] text-white text-xs font-bold">Copy this call{tail > 1 ? ` · ${tail} on it` : ""}</button>
+                      <button onClick={() => fadeDuel(f)} className="h-8 px-3 rounded-lg bg-white border border-[var(--ink)] text-xs font-bold">Fade {f.name}</button>
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          }
           // Called Shot (S2): a sealed one-liner. Stays shut until full-time, torn open ONLY if the call landed.
           if (f.kind === "shot") return (
             <div key={f.id} className="bg-white border border-[var(--line)] rounded-xl p-3">

@@ -28,6 +28,9 @@ const statements = [
 
   // S5 — a call can carry the reason it was made. Copy-a-Call is never a blind clone.
   `ALTER TABLE feed ADD COLUMN IF NOT EXISTS reason text`,
+  // Q9 "see picks after lock" — the pool's own cut-off, stored with the call so the server can decide
+  // when a pick may be revealed. Concealing only in the UI would leave the side in the response body.
+  `ALTER TABLE feed ADD COLUMN IF NOT EXISTS lock_ts bigint`,
 
   // Q2 — the lore wall. A moment is auto-named when it settles, and pinned forever.
   `CREATE TABLE IF NOT EXISTS lore (

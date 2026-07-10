@@ -55,3 +55,6 @@ logs/
 SESSION-BUILD-LOG.md
 FEATURE-AUDIT.md
 .vercel
+
+# Production keeper secrets — local only.
+.keeper.env

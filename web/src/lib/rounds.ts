@@ -292,6 +292,15 @@ export async function maybeAutoBlackout(fixtureId: number, squadCode: string | n
   const key = `${fixtureId}:${squadCode ?? ""}`;
   if (Date.now() - (blackoutCheck.get(key) || 0) < 10_000) return null;
   blackoutCheck.set(key, Date.now());
+
+  // The Blackout is a market that STOPS quoting mid-play. A match that hasn't kicked off is quoted too,
+  // and those pre-match lines sit unchanged for minutes at a time — so `computeSilence` reads a perfectly
+  // healthy pre-match book as a thirty-second blackout and opens a round on a game nobody is playing. It
+  // did exactly that, twelve hours before Spain v Belgium. Silence only means anything while the clock
+  // is running: no live match, no Blackout.
+  const live = await import("./live").then((m) => m.liveState(fixtureId)).catch(() => null);
+  if (!live?.running) return null;
+
   const silent = await oddsSilenceMs(fixtureId);
   if (silent < SILENCE_MS) return null;
   const recent = await db()`SELECT 1 FROM rounds WHERE fixture_id = ${fixtureId} AND opened_at > ${Date.now() - FREEZE_MS} LIMIT 1`;

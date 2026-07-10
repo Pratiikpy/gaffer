@@ -42,6 +42,20 @@ t("trips only at or past the threshold", () => {
   assert.ok(computeSilence(prev, "m1", SILENCE_MS).silentMs >= SILENCE_MS, "30s trips");
 });
 
+/* ── L2b · a Blackout may only arm during live play ──
+ * A pre-match book is quoted, and its lines sit unchanged for minutes. computeSilence sees a stable
+ * MessageId and reports growing silence, so the Blackout armed on Spain v Belgium twelve hours before
+ * kickoff. Silence only means something while the clock is running. */
+const SILENCE_MS_T = 30_000;
+const armsBlackout = ({ running, silentMs }) => running === true && silentMs >= SILENCE_MS_T;
+
+console.log("L2b · the Blackout arms only during live play:");
+t("a live match gone quiet arms it", () => assert.strictEqual(armsBlackout({ running: true, silentMs: 31_000 }), true));
+t("a live match still quoting does not", () => assert.strictEqual(armsBlackout({ running: true, silentMs: 5_000 }), false));
+t("an un-started match never arms it, however still its pre-match book", () => assert.strictEqual(armsBlackout({ running: false, silentMs: 12 * 3600_000 }), false));
+t("a halftime break never arms it", () => assert.strictEqual(armsBlackout({ running: false, silentMs: 60_000 }), false));
+t("a finished match never arms it", () => assert.strictEqual(armsBlackout({ running: false, silentMs: 9e9 }), false));
+
 /* ── L7 · halftime detection (mirror of live.ts liveState) ── */
 const HT = [2700, 3000];
 function halftime({ finished, running, clockSeconds }) {

@@ -26,7 +26,8 @@
     "test:settle-no": "node scripts/test-settle-no.mjs",
     "test:txline-auth": "node scripts/test-txline-auth.mjs",
     "verify:stat-keys": "node scripts/verify-stat-keys.mjs",
-    "e2e:corners": "node scripts/e2e-corners.mjs"
+    "e2e:corners": "node scripts/e2e-corners.mjs",
+    "measure:settle": "node scripts/measure-settle-latency.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

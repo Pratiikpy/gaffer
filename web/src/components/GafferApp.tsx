@@ -1989,7 +1989,7 @@ function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot
               </div>
               <div className="text-right mono text-[10px] text-[var(--muted)]">{noPaysOut ? `${p.multiple.toFixed(2)}× your stake` : "your stake back"}</div>
               {noPaysOut && p.multiple < 1.06 && <div className="mt-1 text-[11px] text-[var(--muted)]">Be first — your payout grows as others back the other side.</div>}
-              {!noPaysOut && <div className="mt-1 text-[11px] text-[var(--muted)]">This match is already over, so nobody can win the NO side — you&apos;d simply get your stake back.</div>}
+              {!noPaysOut && <div className="mt-1 text-[11px] text-[var(--muted)]">Nobody can win the NO side of this pool — if it never happens, you simply get your stake back.</div>}
             </div>
               );
             })()}

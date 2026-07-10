@@ -178,6 +178,13 @@ export default function GafferApp() {
   const [fixtures, setFixtures] = useState<any[]>([]);
   const [selectedFixture, setSelectedFixture] = useState<number>(18172379);
   const [pendingPool, setPendingPool] = useState<string | null>(null); // ?pool= deep link awaiting markets
+  /** True once the match was chosen deliberately — by the fan, or by the link a mate sent them.
+   *
+   * The auto-select below picks a sensible default match on first load. It used to pick it whenever the
+   * current fixture was still the initial constant, which is exactly what a `?pool=` link on that very
+   * fixture leaves behind — so a shared call quietly landed the fan on a different match than the one
+   * they were sent. A deliberate choice is now never overridden. */
+  const fixtureChosen = useRef(false);
   const parlay = useMemo(() => (wallet ? new BrowserParlay(wallet) : null), [wallet]);
   const activeFixture = selectedFixture;
 
@@ -246,7 +253,7 @@ export default function GafferApp() {
     if (!pendingPool || markets.length === 0) return;
     const m = markets.find((x) => x.pubkey === pendingPool);
     setPendingPool(null);
-    if (m) { setSelectedFixture(Number(m.fixtureId)); setDetail(m); flash("Your mate sent you this call 👇"); }
+    if (m) { fixtureChosen.current = true; setSelectedFixture(Number(m.fixtureId)); setDetail(m); flash("Your mate sent you this call 👇"); }
   }, [pendingPool, markets]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { refresh(); if (!POLL) return; const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
 
@@ -278,6 +285,7 @@ export default function GafferApp() {
       // else the match that's on now / next up, else the fallback replay fixture.
       const withPools = markets.find((m) => list.some((f: any) => String(f.fixtureId) === m.fixtureId) && Number(m.threshold) >= 0 && Number(m.threshold) <= 40);
       const live = list.find((f: any) => f.state === "live") || list.find((f: any) => f.state === "soon");
+      if (fixtureChosen.current) return;   // a shared link, or the fan's own tap, wins
       setSelectedFixture((cur) => (cur !== 18172379 ? cur : Number(withPools?.fixtureId || live?.fixtureId || 18172379)));
     });
   }, [markets.length]);
@@ -708,7 +716,7 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} onGoal={onGoal} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} onGoal={onGoal} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={(f: number) => { fixtureChosen.current = true; setSelectedFixture(f); }} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} joinTribe={joinTribe} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}

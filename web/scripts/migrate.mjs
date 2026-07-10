@@ -35,6 +35,18 @@ const statements = [
   // K6 — the push budget. A notification ledger, so "at most four pushes a match" is a fact the server
   // can enforce rather than a promise in a doc. 95% of push-silent opt-ins churn; so does everyone you
   // buzz about a match they have no stake in.
+  // The TxLINE API token, shared across serverless instances.
+  //
+  // Authenticating is not cheap: guest JWT -> an on-chain `subscribe` transaction -> activate. Every
+  // cold lambda was paying that in full, which made the first request to a fresh deployment slow enough
+  // to fail (Hi-Lo answered 503 to the first visitor) and spent the server keypair's SOL on a fresh
+  // subscribe each time. One token, reused, re-minted only when it stops working.
+  `CREATE TABLE IF NOT EXISTS txline_token (
+     id         INT PRIMARY KEY DEFAULT 1,
+     token      TEXT NOT NULL,
+     minted_at  BIGINT NOT NULL,
+     CONSTRAINT txline_token_singleton CHECK (id = 1)
+   )`,
   `CREATE TABLE IF NOT EXISTS push_log (
      id bigserial PRIMARY KEY,
      user_id text NOT NULL,

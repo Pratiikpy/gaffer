@@ -23,6 +23,11 @@ export const maxDuration = 60;
  * Idempotent by construction: anything already settled reports `not open` and is skipped, so running it
  * twice a minute is harmless. Failures are per-item and never abort the sweep — one unprovable market
  * must not stop the pool next to it from paying.
+ *
+ * Two things call it. `agents/keeper-service.mjs` ticks every twenty seconds and is the actual settler
+ * during a match. The Vercel cron in `vercel.json` is a once-a-day backstop — the Hobby plan allows
+ * nothing faster — that mops up pools whose predicate never came true and anything missed while the
+ * live keeper was down. Neither is privileged: cranking is permissionless, and anyone may do it.
  */
 export async function GET(req: NextRequest) {
   return run(req);

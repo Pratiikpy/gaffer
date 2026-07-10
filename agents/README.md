@@ -15,7 +15,7 @@ server-side (de-margined 1X2 implied %). Run the web app first (`cd ../web && np
 | **Agent-vs-Agent Arena** | `arena.mjs` | Two agents run opposite strategies (favorite vs underdog) over the same odds, settle on real results, accrue PnL + W/L. Full wiring settles each position on-chain via the LATCH kernel (`../latch`) | `node arena.mjs --selftest` → PASS |
 | **In-Play Market Maker** | `market-maker.mjs` | Quotes bid/ask around fair, PULLS quotes on a decisive event (goal/red/VAR/penalty) — the risk gate that's the real MM failure mode | `node market-maker.mjs --selftest` → PASS |
 | **AI Pundit** | `../web/src/app/api/pundit/route.ts` | Reacts to a real TxLINE moment with a one-line opinionated take; never-blank templated fallback; LLM-backed (NIM; 0G key available) | `curl -X POST /api/pundit -d '{"kind":"goal",...}'` → a line |
-| **Keeper** (settler) | `../src/keeper.ts` | Autonomous: discovers an anchored proof unaided and pays the winner via the kernel | proven on devnet (STATUS.md) |
+| **Keeper** (settler) | `../src/keeper.ts` | Autonomous: discovers an anchored proof unaided and pays the winner via the kernel | proven on devnet |
 
 ## The edge (why TxLINE + on-chain)
 

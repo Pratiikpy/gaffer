@@ -23,7 +23,10 @@ import latchIdl from "../idl/latch.json";
 import { TxlineClient, TXORACLE } from "./txline";
 
 const RPC = process.env.RPC || "https://api.devnet.solana.com";
-const FIXTURE = Number(process.env.FIXTURE || 17588388);
+// A finished World Cup fixture whose day is still anchored in `daily_scores_roots` (USA 2-0 Bosnia:
+// goals and corners both > 0, so one seq proves every market shape the suite needs). Override with
+// FIXTURE=<id> when this one's anchor eventually ages out — the roots keep roughly three weeks.
+const FIXTURE = Number(process.env.FIXTURE || 18172379);
 const PROGRAM_ID = new PublicKey((latchIdl as any).address);
 const GRACE = 120; // VOID_GRACE_SECS in the kernel
 const MAX_RAKE_BPS = 500; // must match the kernel's hard cap
@@ -103,14 +106,19 @@ async function main() {
   sec("0 · Fetch real anchored proofs (P1 goals key1>0 AND corners key7>0)");
   const tx = await new TxlineClient(conn, A).authenticate();
   const events = await tx.historicalEvents(FIXTURE);
-  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => b - a);
+  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => a - b);
+  // Sample ACROSS the match, not just its tail. The newest sequences are post-final-whistle status
+  // messages that carry no stat proof, so a suite that only looked at the last 25 found nothing and
+  // crashed before a single assertion ran. The settlement engine has always sampled the whole match;
+  // the test suite now does the same, and reports honestly when a fixture genuinely has no proof.
+  const spread = [...new Set(Array.from({ length: 24 }, (_, k) => Math.floor((seqs.length - 1) * (k / 23))))].map((i) => seqs[i]);
   let g: any = null, c: any = null, seq = 0;
-  for (const s of seqs.slice(0, 25)) {
+  for (const s of spread) {
     const gb = await tx.statValidation(FIXTURE, s, 1);
     const cb = await tx.statValidation(FIXTURE, s, 7);
     if (gb && cb && gb.statToProve.value > 0 && cb.statToProve.value > 0) { g = gb; c = cb; seq = s; break; }
   }
-  if (!g || !c) throw new Error("could not find a seq with both goals>0 and corners>0 anchored");
+  if (!g || !c) throw new Error(`fixture ${FIXTURE}: no anchored seq with BOTH goals>0 and corners>0 (sampled ${spread.length} of ${seqs.length} seqs). Pass FIXTURE=<id> for a match whose day is still anchored.`);
   console.log(`  ✓ seq ${seq}: goals=${g.statToProve.value} (key ${g.statToProve.key}), corners=${c.statToProve.value} (key ${c.statToProve.key})`);
 
   // ── create the two TIME-GATED markets up front so the 120s grace elapses during the other tests ──

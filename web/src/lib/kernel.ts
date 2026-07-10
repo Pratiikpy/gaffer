@@ -55,6 +55,8 @@ export interface MarketView {
   noTotal: string;
   potSol: number;
   lockTs: string;
+  /** When the predicate can no longer come true. Past `expiry + VOID_GRACE_SECS` the keeper refunds. */
+  expiryTs: string;
   settleTs: string;
 }
 
@@ -78,6 +80,7 @@ export async function listMarkets(): Promise<MarketView[]> {
       noTotal: a.noTotal.toString(),
       potSol: pot,
       lockTs: a.lockTs.toString(),
+      expiryTs: a.expiryTs.toString(),
       settleTs: a.settleTs.toString(),
     };
   }).sort((x: MarketView, y: MarketView) => Number(y.marketId) - Number(x.marketId));

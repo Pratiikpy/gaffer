@@ -1822,7 +1822,7 @@ function AskCard({ onAsk, busy, home, away }: { onAsk: (t: string) => Promise<bo
         <button
           onClick={() => void submit()}
           disabled={busy || !text.trim()}
-          className="h-12 px-5 rounded-xl bg-[var(--ink)] text-white font-bold disabled:opacity-40">
+          className="h-12 px-5 shrink-0 whitespace-nowrap rounded-xl bg-[var(--ink)] text-white font-bold disabled:opacity-40">
           {busy ? "Reading…" : "Open it"}
         </button>
       </div>

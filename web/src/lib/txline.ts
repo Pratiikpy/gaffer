@@ -12,6 +12,7 @@ import {
 import * as nacl from "tweetnacl";
 import { RPC, TXLINE_API, TXORACLE, SUB_MINT } from "./config";
 import { loadServerKeypair } from "./serverConfig";
+import { cached } from "./cache";
 import txoracleIdl from "./txoracle.idl.json";
 
 class TxlineServer {
@@ -56,7 +57,22 @@ class TxlineServer {
     this.http.defaults.headers.common["X-Api-Token"] = this.apiToken;
   }
 
+  /** A finished match is a thousand-plus events, delivered as one SSE stream with no seq-range fetch.
+   *
+   * It is also the single hottest call in the app: the live pulse, the scores route, Hi-Lo, the market
+   * compiler and the keeper (once per open market) all want the same fixture's events, often in the same
+   * second. Un-coalesced, a keeper sweep alone re-streamed the same match a dozen times and TxLINE began
+   * answering 502 — which surfaced as Hi-Lo returning 503 on a cold deployment, the first request a new
+   * visitor makes.
+   *
+   * One stream per fixture per few seconds, shared by every caller, and a slightly stale event list
+   * through a blip beats an error. Fresh enough for a live match: `settle` re-verifies every proof
+   * on-chain regardless of what we read here. */
   async historicalEvents(fixtureId: number): Promise<any[]> {
+    return cached(`events:${fixtureId}`, { ttlMs: 5_000, swrMs: 30_000, staleMs: 120_000 }, () => this.readEvents(fixtureId));
+  }
+
+  private async readEvents(fixtureId: number): Promise<any[]> {
     await this.ensure();
     const raw: string = (await this.http.get(`/api/scores/historical/${fixtureId}`, { transformResponse: (r) => r })).data;
     return (typeof raw === "string" ? raw : "")
@@ -96,7 +112,23 @@ class TxlineServer {
     } catch { return []; }
   }
 
+  /** A proof bundle for one (fixture, seq, stat).
+   *
+   * Only HITS are remembered. An anchored proof is immutable, so holding it forever is free and saves a
+   * keeper sweeping twenty markets on one match from re-fetching the same bundles every tick. A miss is
+   * never cached here: a seq that isn't anchored yet becomes anchored a few minutes later, and a stale
+   * "no proof" would delay the payout — which is the one thing this product promises. */
+  private proofs = new Map<string, any>();
   async statValidation(fixtureId: number, seq: number, statKey: number, statKey2?: number): Promise<any | null> {
+    const key = `${fixtureId}:${seq}:${statKey}:${statKey2 ?? ""}`;
+    const hit = this.proofs.get(key);
+    if (hit) return hit;
+    const v = await this.readStatValidation(fixtureId, seq, statKey, statKey2);
+    if (v) this.proofs.set(key, v);
+    return v;
+  }
+
+  private async readStatValidation(fixtureId: number, seq: number, statKey: number, statKey2?: number): Promise<any | null> {
     await this.ensure();
     try {
       const v = (await this.http.get("/api/scores/stat-validation", { params: { fixtureId, seq, statKey, ...(statKey2 ? { statKey2 } : {}) } })).data;

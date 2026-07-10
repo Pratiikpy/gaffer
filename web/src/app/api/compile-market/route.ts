@@ -4,6 +4,7 @@ import { ogConfigured } from "@/lib/og";
 import { txline } from "@/lib/txline";
 import { fixtureNames } from "@/lib/fixtureNames";
 import { cached } from "@/lib/cache";
+import { listMarkets } from "@/lib/kernel";
 import { expiryForFixture } from "@/lib/matchWindow";
 
 export const runtime = "nodejs";
@@ -65,6 +66,20 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.ok) return NextResponse.json(result);
+
+    // The same question, twice, is two pools splitting one room's money — and it reads as a bug on the
+    // board. If it is already open, send the fan to it instead of minting a rival.
+    const existing = await cached("markets", { ttlMs: 3000, swrMs: 30_000, staleMs: 60_000 }, listMarkets)
+      .then((ms: any[]) => ms.find((m) =>
+        m.status === 0 &&
+        Number(m.fixtureId) === fixtureId &&
+        m.statKey === result.predicate.statKey &&
+        m.threshold === result.predicate.threshold))
+      .catch(() => null);
+    if (existing) {
+      return NextResponse.json({ ok: false, reason: `“${result.question}” is already open — back it below.` });
+    }
+
     return NextResponse.json({
       ok: true,
       question: result.question,

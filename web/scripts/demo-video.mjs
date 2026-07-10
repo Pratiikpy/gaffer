@@ -64,10 +64,31 @@ const clickByText = async (page, label, exact = true) => {
 
 // Arrive the way a fan actually arrives: on a link a mate sent. `?pool=` selects that pool's match, so
 // the film opens on a real scoreline rather than on whichever fixture the app happened to default to.
-const hero = await fetch(`${BASE}/api/markets`).then((r) => r.json()).then((d) =>
-  d.markets.find((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 1 && m.threshold === 0));
-if (!hero) throw new Error("no open hero pool — run POST /api/provision-hero first");
+const findHero = async () => (await fetch(`${BASE}/api/markets`).then((r) => r.json())).markets
+  .find((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 1 && m.threshold === 0);
+
+/** Pick a question that is not already on the board — the app now refuses duplicates, rightly. */
+const freeQuestion = async () => {
+  const open = (await fetch(`${BASE}/api/markets`).then((r) => r.json())).markets
+    .filter((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 2)
+    .map((m) => m.threshold);
+  const phrases = ["Bosnia to score", "Bosnia to score twice", "Bosnia to bag a hat-trick", "Bosnia to score 4+ goals", "Bosnia to score 5+ goals"];
+  for (let t = 1; t < phrases.length; t++) if (!open.includes(t)) return { text: phrases[t], atLeast: t + 1 };
+  throw new Error("every Bosnia question is already open on the hero match");
+};
+
+let hero = await findHero();
+if (!hero) {
+  // Keep one alive, then give the markets cache a moment to catch up with the chain.
+  await fetch(`${BASE}/api/provision-hero`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  for (let i = 0; i < 8 && !hero; i++) { await new Promise((r) => setTimeout(r, 2500)); hero = await findHero(); }
+}
+if (!hero) throw new Error("no open hero pool, and provisioning one did not take");
 const ENTRY = `${BASE}/?pool=${hero.pubkey}`;
+
+const ASK = await freeQuestion();
+console.log(`asking: "${ASK.text}"
+`);
 
 const browser = await chromium.launch();
 const context = await browser.newContext({
@@ -112,7 +133,7 @@ try {
   await page.locator(askSel).scrollIntoViewIfNeeded();
   await sleep(1200);
   await page.locator(askSel).click();
-  await page.locator(askSel).type("Bosnia to bag a hat-trick", { delay: 55 });
+  await page.locator(askSel).type(ASK.text, { delay: 55 });
   await sleep(900);
   await chapter(page, "ask it how youd say it to a mate");
 
@@ -128,7 +149,7 @@ try {
   await until(page, "the pool card the fan just minted", () => {
     const card = [...document.querySelectorAll("div")].find((d) =>
       typeof d.className === "string" && d.className.includes("rounded-2xl") &&
-      /3\+ goals\?/.test(d.innerText) &&
+      new RegExp(`${ASK.atLeast}\+ goals\?`).test(d.innerText) &&
       [...d.querySelectorAll("button")].some((b) => b.textContent.trim() === "YES"));
     if (!card) return false;
     card.scrollIntoView({ block: "center" });

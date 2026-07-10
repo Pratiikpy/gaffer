@@ -1837,9 +1837,32 @@ function LiveNow({ fixtureId, markets, positions, onOpen, onGoal, onPulse }: { f
     return () => { alive = false; clearTimeout(timer); };
   }, [fixtureId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!pulse || pulse.homeGoals == null) return null;
+  if (!pulse) return null;
   const f = fx(fixtureId);
   const clock = pulse.finished ? "FT" : pulse.atHalftime ? "HT" : pulse.clockSeconds != null ? `${Math.floor(pulse.clockSeconds / 60)}'` : null;
+
+  // The match is in play — the market is trading in-running — but the score stream has reported no
+  // scoreline yet. Say the match is live and say the score is not in yet; never stand in a fabricated
+  // 0–0. This is the state a live dev-feed match sits in the whole way through: odds moving, scores mute.
+  if (pulse.homeGoals == null) {
+    if (!pulse.running) return null;   // not live and no score → nothing to show
+    return (
+      <div className="w-full bg-white border border-[var(--line)] rounded-2xl px-4 py-3 mb-3">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+            <span className="font-bold text-right leading-tight truncate text-[15px]">{f.home}</span>
+            <Flag name={f.home} size={18} round />
+          </span>
+          <span className="flex items-center gap-1.5 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] gf-pulse" /><span className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Live</span></span>
+          <span className="flex items-center gap-2 flex-1 min-w-0">
+            <Flag name={f.away} size={18} round />
+            <span className="font-bold leading-tight truncate text-[15px]">{f.away}</span>
+          </span>
+        </div>
+        <div className="mono text-[10px] text-[var(--muted)] text-center mt-1.5">Kicked off — the market&apos;s moving. Score lands here the moment the feed calls it.</div>
+      </div>
+    );
+  }
 
   // Your stake on this match, and what it's worth if it lands. One line, no navigation.
   const mine = positions
@@ -2974,17 +2997,23 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
 
   const recent: any[] = scores?.recent || [];
   const latest = recent[recent.length - 1];
-  const g1 = Number(latest?.Stats?.[1] || 0), g2 = Number(latest?.Stats?.[2] || 0);
+  // A real reported score, or nothing — `Stats[1] || 0` used to turn "no data" into a fabricated 0–0.
+  const hasScore = latest?.Stats?.[1] != null;
+  const g1 = hasScore ? Number(latest.Stats[1]) : null;
+  const g2 = hasScore ? Number(latest.Stats[2] ?? 0) : null;
   const secs = latest?.Clock?.Seconds != null ? Number(latest.Clock.Seconds) : null;
+  // In play if the score stream's clock is running, OR the odds stream says so (pulse.liveFromOdds) when
+  // the score stream is silent — which is how the whole match looks on the dev feed.
   const running = latest?.Clock?.Running;
+  const live = !!(running || pulse?.running);
   const state: string = latest?.GameState || "";
   const clock = secs != null ? `${Math.floor(secs / 60)}'` : "";
   // The eyebrow says what the match is doing; the right-hand slot carries the clock, and only the clock.
   // Both used to fall back to the words "Match Centre", which the section header above already says —
   // pre-match the card read "MATCH CENTRE … Match Centre" under a "Match Centre ·" title.
-  // When the feed has said nothing about this fixture we do not know whether it is hours away or long
-  // over, so the card says nothing rather than guessing.
-  const status = !latest ? "" : running ? "Live" : state === "scheduled" ? "Kick-off soon" : clock ? "Paused" : "Full time";
+  // When neither stream has said anything we do not know whether the match is hours away or long over,
+  // so the card says nothing rather than guessing.
+  const status = live ? "Live" : !latest ? "" : state === "scheduled" ? "Kick-off soon" : clock ? "Paused" : "Full time";
   const timeline = buildTimeline(recent, f.home, f.away);
   // The freshest punditworthy moment for The Gaffer's Take (goal > red > chance; corners/bookings skipped).
   const bigMoment = useMemo(() => {
@@ -3009,7 +3038,7 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
         <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full opacity-[0.16]" style={{ background: `radial-gradient(circle, ${team(f.home).primary}, transparent 70%)` }} />
         <div className="absolute -right-10 -top-10 w-44 h-44 rounded-full opacity-[0.16]" style={{ background: `radial-gradient(circle, ${team(f.away).primary}, transparent 70%)` }} />
         <div className="flex items-center justify-between">
-          <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{running && <span className="inline-block w-2 h-2 rounded-full bg-[var(--greenb)] gf-pulse mr-1.5 align-middle" />}{status}</span>
+          <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{live && <span className="inline-block w-2 h-2 rounded-full bg-[var(--greenb)] gf-pulse mr-1.5 align-middle" />}{status}</span>
           <span className="mono text-[10px] text-[#9CA3AF]">{running ? clock : ""}</span>
         </div>
         {SPOILER_SAFE ? (
@@ -3025,11 +3054,14 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
         ) : (
           <div className="flex items-center justify-center gap-5 mt-4">
             <div className="flex-1 flex flex-col items-end gap-1.5"><Flag name={f.home} size={34} round /><div className="text-[15px] font-bold text-right leading-tight">{f.home}</div></div>
-            <div className="text-5xl font-extrabold tabular-nums">{g1}<span className="text-[#6B7280] px-2">–</span>{g2}</div>
+            {/* A real score, or honest dots — never a 0–0 the feed didn't report. */}
+            {hasScore
+              ? <div className="text-5xl font-extrabold tabular-nums">{g1}<span className="text-[#6B7280] px-2">–</span>{g2}</div>
+              : <div className="text-4xl font-extrabold tabular-nums text-[#6B7280]">•&nbsp;–&nbsp;•</div>}
             <div className="flex-1 flex flex-col items-start gap-1.5"><Flag name={f.away} size={34} round /><div className="text-[15px] font-bold leading-tight">{f.away}</div></div>
           </div>
         )}
-        <div className="text-[12px] text-[#9CA3AF] mt-4 text-center">Make a call from Today and watch it settle the second it counts.</div>
+        <div className="text-[12px] text-[#9CA3AF] mt-4 text-center">{live && !hasScore ? "Kicked off — the market's already moving. The score lands here the moment the feed calls it." : "Make a call from Today and watch it settle the second it counts."}</div>
       </div>
 
       {/* THE GAFFER'S TAKE — AI pundit on the real feed (the track's "AI Pundit", with voice). */}

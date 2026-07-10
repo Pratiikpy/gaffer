@@ -28,11 +28,17 @@ export type LiveState = {
    *  reported stats yet — an unknown score is shown as unknown, never as 0–0. */
   homeGoals: number | null;
   awayGoals: number | null;
+  /** True when we know the match is in play from the ODDS stream (`InRunning`), not from the score
+   *  stream. On the dev feed the scores stream stays silent during a live match — no clock, no events,
+   *  the snapshot pinned to "scheduled" — while the market trades in-running the whole time. When that
+   *  happens the match is unmistakably on, so we say `running`, but the scoreline stays `null` because
+   *  nothing has reported it. A live match with no numbers yet, told honestly. */
+  liveFromOdds: boolean;
 };
 
 /** A fixture we know nothing about. Distinct from a fixture whose feed call FAILED — see below. */
 export const emptyLiveState = (fixtureId: number): LiveState =>
-  ({ fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false, homeGoals: null, awayGoals: null });
+  ({ fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false, homeGoals: null, awayGoals: null, liveFromOdds: false });
 
 /** Read the live state of a fixture. Single-flighted: a squad polling together must cost ONE feed call,
  * not one per phone. A stale-but-recent state beats an error while the feed catches its breath. */
@@ -76,8 +82,24 @@ async function readLiveState(fixtureId: number): Promise<LiveState> {
       const homeGoals = withStats ? Number(withStats.Stats["1"]) : null;
       const awayGoals = withStats ? Number(withStats.Stats["2"] ?? 0) : null;
 
-      v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf, homeGoals, awayGoals };
+      v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf, homeGoals, awayGoals, liveFromOdds: false };
     }
   }
+
+  // The score stream told us nothing — no clock, no finish. Ask the odds stream whether the match is on.
+  // Its in-play prices carry `InRunning: true` throughout a live match even when the scores lag hours
+  // behind, so it is the earliest and often only signal that the ball is rolling. We do NOT touch the
+  // scoreline: it stays unknown, because the market knowing a match is live is not the market knowing the
+  // score. Only asked when the score stream is silent, so a normal live match costs no extra call.
+  if (!v.running && !v.finished && v.clockSeconds == null) {
+    const inPlay = await oddsInRunning(fixtureId).catch(() => false);
+    if (inPlay) v = { ...v, running: true, liveFromOdds: true };
+  }
   return v;
+}
+
+/** Is the market trading in-running for this fixture? True when any live odds record says so. */
+async function oddsInRunning(fixtureId: number): Promise<boolean> {
+  const odds: any[] = await txline().oddsSnapshot(fixtureId);
+  return odds.some((o) => o?.InRunning === true);
 }

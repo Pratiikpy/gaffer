@@ -50,3 +50,7 @@ src/probe-*.ts
 
 # Transient keeper/agent run logs (local evidence, not committed)
 logs/
+
+# Internal working notes — never part of the public project.
+SESSION-BUILD-LOG.md
+FEATURE-AUDIT.md

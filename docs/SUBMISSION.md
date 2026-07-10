@@ -1,6 +1,7 @@
 # GAFFER — TxLINE Hackathon Submission
 
-**Live app:** https://gaffer-cyan.vercel.app (no sign-up, no install — you're playing in seconds)
+**Live app:** https://gaffer-cyan.vercel.app (no sign-up, no install, no wallet to set up — you're playing in seconds, and judges never need to fund anything)
+**Demo video:** _(filmed during a live knockout match — link added on submission)_
 **Repo:** this repository · **Chain:** Solana devnet · **Data:** TxLINE / TxODDS live World Cup feeds
 
 ---
@@ -28,8 +29,9 @@ TxLINE isn't a garnish — it's the settlement substrate. Nothing pays out witho
 
 ## Technical highlights
 
-- **LATCH kernel** (Anchor / Solana, `HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG`): non-custodial parimutuel pools + N-leg parlays, self-settling via the `validate_stat` CPI. `lock_ts` closes the oracle-latency exploit (no call lands after the cut-off). **39/39 on the devnet test suite** — pro-rata payout to the lamport, refunds, parlay sweeps/busts, every settlement-binding negative, and the rake.
+- **LATCH kernel** (Anchor / Solana, `HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG`): non-custodial parimutuel pools + N-leg parlays, self-settling via the `validate_stat` CPI. `lock_ts` closes the oracle-latency exploit (no call lands after the cut-off). **39/39 on the devnet test suite** (`npm run test:kernel`, against real anchored proofs) — pro-rata payout to the lamport, refunds, parlay sweeps/busts, every settlement-binding negative, and the rake. Plus 8 kernel unit tests and 127 assertions across the app's suites.
 - **Permissionless, repeatable settlement.** Settle is a permissionless crank — the kernel re-verifies the proof, so anyone can settle and no one can settle wrongly. The app keeps a fresh, open demo pool alive on-demand so **every** visitor reaches the PAID moment, not just the first.
+- **Nobody presses a button.** An unattended keeper (`agents/keeper-service.mjs` → `GET /api/keeper`, also on a Vercel cron) sweeps every open pool and slip and cranks each one the chain will now accept a proof for. It decides nothing — it pays the fee to *ask*, and `validate_stat` answers. A pool whose predicate never comes true is voided past `expiry + grace`, refunding both sides rather than stranding the pot. Every sweep is appended to `logs/keeper-<date>.jsonl`, successes and failures alike.
 - **A real commercial floor.** A capped-5%, currently-0, winnings-only protocol rake lives in an on-chain config PDA; the app's fee line reads the live number straight from chain — a verifiable revenue switch, not a slide.
 - **Server-authoritative game layer.** Points/streaks/squads on Postgres; money grants verified to the exact on-chain instruction discriminator; per-user token guard.
 - **Consumer-grade shell.** Next.js 16 installable PWA, web push (VAPID, fans a squad out the instant the Frozen Window opens), dynamic Proof-of-Payout / brand OG images, 18+ gate, responsible-play (mute-money) and watch-along (spoiler-safe) modes. Zero crypto jargon anywhere a fan reads.

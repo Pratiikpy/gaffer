@@ -45,9 +45,21 @@ class TxlineServer {
   /** Reuse a stored token if there is one; otherwise mint a fresh one and store it for the next lambda. */
   private async acquireToken(): Promise<void> {
     const stored = await this.loadToken().catch(() => null);
-    if (stored) { this.useToken(stored); return; }
+    if (stored) { await this.ensureJwt(); this.useToken(stored); return; }
     await this.authenticate();
     await this.saveToken(this.apiToken).catch(() => { /* a token we can't share still works here */ });
+  }
+
+  /** The API token is not sufficient on its own — every request also needs a guest JWT.
+   *
+   * `authenticate()` happens to set both, so this was invisible until the token started being shared:
+   * a cold instance loaded the stored token, sent it with no `Authorization` header, got a 401, decided
+   * the token had expired, and signed a brand-new on-chain `subscribe`. Four of them landed in one
+   * keeper sweep. A guest JWT is free and instant; get one before using anybody's token. */
+  private async ensureJwt(): Promise<void> {
+    if (this.jwt) return;
+    this.jwt = (await this.http.post("/auth/guest/start")).data.token;
+    this.http.defaults.headers.common["Authorization"] = `Bearer ${this.jwt}`;
   }
 
   private useToken(token: string) {
@@ -82,6 +94,11 @@ class TxlineServer {
     if (Date.now() - this.lastMintAt < TxlineServer.MINT_COOLDOWN_MS) return; // too soon; let the call fail
     if (!this.reauth) {
       this.reauth = (async () => {
+        // Somebody else may already have paid for this. Instances share the token through Postgres, so
+        // before signing a subscription of our own, look whether a newer one has landed.
+        const fresh = await this.loadToken().catch(() => null);
+        if (fresh && fresh !== this.apiToken) { this.useToken(fresh); return; }
+
         this.lastMintAt = Date.now();
         this.apiToken = "";
         await this.authenticate();

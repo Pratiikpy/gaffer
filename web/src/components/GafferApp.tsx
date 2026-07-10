@@ -462,10 +462,8 @@ export default function GafferApp() {
     try {
       const c = await compileMarket(text, selectedFixture);
       if (!c.ok) { flash(c.reason, "err"); return false; }
-      // A week to settle, with the betting window running to the same instant — the shape every other
-      // pool uses. The keeper closes it the moment the goal is anchored.
-      const expiry = Math.floor(Date.now() / 1000) + 7 * 86400;
-      await kernel.createMarket({ fixtureId: c.fixtureId, ...c.market }, expiry);
+      // The server decides when the pool expires: the end of the match, so its NO side stays provable.
+      await kernel.createMarket({ fixtureId: c.fixtureId, ...c.market }, c.expiryTs);
       flash(`Your pool is live — ${c.question}`);
       await refresh();
       return true;
@@ -1978,15 +1976,23 @@ function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot
                 <span className="text-[12px] font-semibold text-[var(--green)] leading-snug">Only {sharePct}% of the room is on this. Call it against them — the fewer who back it, the bigger your cut.</span>
               </div>
             )}
+            {/* A pool that outlives its match can never prove the NO side, so NO can only ever be repaid.
+                Quoting it a share of the pot would be a number we cannot pay. */}
+            {(() => {
+              const noPaysOut = sheet.side !== 2 || sheet.m.noResolvable !== false;
+              return (
             <div className="mt-3 rounded-2xl bg-[#FAFAF7] border border-[var(--line)] p-4">
               <div className="flex justify-between mono text-[10px] text-[#9CA3AF]"><span>POOL NOW {p.potNow.toFixed(2)}</span><span>YES {p.yes.toFixed(2)} · NO {p.no.toFixed(2)}</span></div>
               <div className="mt-2 flex items-end justify-between">
-                <span className="text-sm font-semibold text-[var(--muted)]">If it lands you win</span>
-                <span className="text-2xl font-extrabold text-[var(--green)]">~{money(p.payout)}</span>
+                <span className="text-sm font-semibold text-[var(--muted)]">{noPaysOut ? "If it lands you win" : "If it never happens"}</span>
+                <span className="text-2xl font-extrabold text-[var(--green)]">{noPaysOut ? `~${money(p.payout)}` : money(stake)}</span>
               </div>
-              <div className="text-right mono text-[10px] text-[var(--muted)]">{p.multiple.toFixed(2)}× your stake</div>
-              {p.multiple < 1.06 && <div className="mt-1 text-[11px] text-[var(--muted)]">Be first — your payout grows as others back the other side.</div>}
+              <div className="text-right mono text-[10px] text-[var(--muted)]">{noPaysOut ? `${p.multiple.toFixed(2)}× your stake` : "your stake back"}</div>
+              {noPaysOut && p.multiple < 1.06 && <div className="mt-1 text-[11px] text-[var(--muted)]">Be first — your payout grows as others back the other side.</div>}
+              {!noPaysOut && <div className="mt-1 text-[11px] text-[var(--muted)]">This match is already over, so nobody can win the NO side — you&apos;d simply get your stake back.</div>}
             </div>
+              );
+            })()}
           </>
         ); })()}
         {/* S5 — the reason rides with the call, so a mate copying it is never copying blind. */}

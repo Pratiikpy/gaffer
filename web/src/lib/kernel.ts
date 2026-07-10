@@ -59,6 +59,8 @@ export interface MarketView {
   lockTs: string;
   /** When the predicate can no longer come true. Past `expiry + VOID_GRACE_SECS` the keeper refunds. */
   expiryTs: string;
+  /** Server-joined: can the NO side ever be proven? False on pools whose match is already over. */
+  noResolvable?: boolean;
   settleTs: string;
 }
 

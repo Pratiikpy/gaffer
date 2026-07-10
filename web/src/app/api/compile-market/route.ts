@@ -4,6 +4,7 @@ import { ogConfigured } from "@/lib/og";
 import { txline } from "@/lib/txline";
 import { fixtureNames } from "@/lib/fixtureNames";
 import { cached } from "@/lib/cache";
+import { expiryForFixture } from "@/lib/matchWindow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,6 +70,8 @@ export async function POST(req: NextRequest) {
       question: result.question,
       team: result.team,
       fixtureId,
+      // The pool must expire when the match does, or its NO side can never be proven.
+      expiryTs: await expiryForFixture(fixtureId),
       // Exactly the arguments `create_market` takes. The browser signs it; we never do.
       market: {
         statKey: result.predicate.statKey,

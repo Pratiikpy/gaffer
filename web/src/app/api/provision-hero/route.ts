@@ -7,6 +7,7 @@ import { RPC } from "@/lib/config";
 import { loadServerKeypair } from "@/lib/serverConfig";
 import { listMarkets } from "@/lib/kernel";
 import { txline } from "@/lib/txline";
+import { expiryForFixture } from "@/lib/matchWindow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,7 +47,8 @@ async function canMint(conn: Connection, kp: any): Promise<boolean> {
 }
 
 async function mintPool(program: any, kp: any, fixtureId: number, statKey: number): Promise<string> {
-  const expiry = Math.floor(Date.now() / 1000) + 7 * 86400;
+  // A pool must expire when the match does, or its NO side can never be proven (see matchWindow.ts).
+  const expiry = await expiryForFixture(fixtureId);
   const id = new BN(Date.now()).mul(new BN(1000)).add(new BN(Math.floor(Math.random() * 1000)));
   const market = PublicKey.findProgramAddressSync([Buffer.from("market"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0];
   const vault = PublicKey.findProgramAddressSync([Buffer.from("vault"), market.toBuffer()], PROGRAM_ID)[0];

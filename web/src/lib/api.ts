@@ -1,10 +1,21 @@
 "use client";
-import type { MarketView } from "./kernel";
+import type { MarketView, ParlayView } from "./kernel";
 import { detectLang, shareStreak } from "./i18n";
 
 export async function getMarkets(): Promise<MarketView[]> {
   const r = await fetch("/api/markets", { cache: "no-store" });
   return (await r.json()).markets || [];
+}
+/** Live slips. Served from the server's coalesced cache — never `getProgramAccounts` from the phone. */
+export async function getParlays(): Promise<ParlayView[]> {
+  const r = await fetch("/api/parlays", { cache: "no-store" });
+  return (await r.json()).parlays || [];
+}
+/** Your open calls, for display. Every collect still re-reads the position from the chain first. */
+export async function getPositions(owner: string): Promise<{ market: string; side: number; amount: number; claimed: boolean }[]> {
+  if (!owner) return [];
+  const r = await fetch(`/api/positions?owner=${owner}`, { cache: "no-store" });
+  return (await r.json()).positions || [];
 }
 export async function getScores(fixtureId: string | number): Promise<any> {
   const r = await fetch(`/api/scores/${fixtureId}`, { cache: "no-store" });
@@ -60,6 +71,7 @@ export async function mysteryList(): Promise<{ fixtureId: number; home: string; 
 export type LivePulse = {
   fixtureId: number; finished: boolean; clockSeconds: number | null; running: boolean;
   atHalftime: boolean; secondHalf: boolean;
+  homeGoals: number | null; awayGoals: number | null;
   silentMs: number; silenceThresholdMs: number; marketQuiet: boolean;
   pick: { fixtureId: number; side: string; quest: string } | null;
   canTwist: boolean;

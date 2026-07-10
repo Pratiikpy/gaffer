@@ -24,6 +24,10 @@ export type LiveState = {
   running: boolean;
   atHalftime: boolean;
   secondHalf: boolean;
+  /** The scoreline, read off the newest event that actually carried one. `null` when the feed has not
+   *  reported stats yet — an unknown score is shown as unknown, never as 0–0. */
+  homeGoals: number | null;
+  awayGoals: number | null;
 };
 
 /** Read the live state of a fixture. Single-flighted: a squad polling together must cost ONE feed call,
@@ -33,7 +37,7 @@ export async function liveState(fixtureId: number): Promise<LiveState> {
 }
 
 async function readLiveState(fixtureId: number): Promise<LiveState> {
-  const empty: LiveState = { fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false };
+  const empty: LiveState = { fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false, homeGoals: null, awayGoals: null };
   let v = empty;
   try {
     const events: any[] = await txline().historicalEvents(fixtureId);
@@ -51,7 +55,14 @@ async function readLiveState(fixtureId: number): Promise<LiveState> {
       const atHalftime = !finished && !running && inBand;
       const secondHalf = clockSeconds != null && clockSeconds > HT_WINDOW[1];
 
-      v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf };
+      // Stat 1 = home goals, stat 2 = away goals. Most events carry no Stats block at all, so walk back
+      // to the newest one that does. A genuine 0–0 reports `{"1": 0}`; a match with no data reports
+      // nothing — and those two must never render the same way.
+      const withStats = [...bySeq].reverse().find((e) => e?.Stats && e.Stats["1"] != null);
+      const homeGoals = withStats ? Number(withStats.Stats["1"]) : null;
+      const awayGoals = withStats ? Number(withStats.Stats["2"] ?? 0) : null;
+
+      v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf, homeGoals, awayGoals };
     }
   } catch { /* feed hiccup — an unknown state is "not at halftime", never a fabricated one */ }
   return v;

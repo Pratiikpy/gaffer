@@ -9,12 +9,11 @@ import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
 import { canInstall, onInstallable, promptInstall, isIOS, isStandalone, setBadge } from "@/lib/install";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
-import { getMarkets, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList, joinNationRoom } from "@/lib/api";
+import { getMarkets, getParlays, getPositions, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList, joinNationRoom } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
 import { enablePush, pushPermission } from "@/lib/pushClient";
-import { listParlays } from "@/lib/kernel";
 import type { MarketView, ParlayView } from "@/lib/kernel";
 
 // Fallback names shown instantly before /api/fixtures resolves; the live schedule fills the rest.
@@ -103,6 +102,18 @@ function projection(m: MarketView, side: number, stakeSol: number) {
   const payout = sideAfter > 0 ? (potAfter * stakeSol) / sideAfter : stakeSol;
   return { yes, no, potNow: yes + no, payout, multiple: stakeSol > 0 ? payout / stakeSol : 0 };
 }
+/** What a position ALREADY IN the pool collects if its side wins.
+ *
+ * Not the same sum as `projection()`, and the difference is money. `projection()` answers "if I add this
+ * stake, what would I win" — it adds the stake to both the pot and your side. A position you already hold
+ * is *in* those totals, so running it through `projection()` counts your stake twice and quietly
+ * understates the payout. This is the same arithmetic `claim()` performs against the chain.
+ */
+function heldPayout(m: MarketView, side: number, amountSol: number) {
+  const yes = Number(m.yesTotal) / 1e9, no = Number(m.noTotal) / 1e9;
+  const pot = yes + no, sideTotal = side === 1 ? yes : no;
+  return sideTotal > 0 ? (pot * amountSol) / sideTotal : amountSol;
+}
 // Marginal multiple a side pays right now (empty side → null = "be first").
 function sideMultiple(m: MarketView, side: number) {
   const yes = Number(m.yesTotal) / 1e9, no = Number(m.noTotal) / 1e9, pot = yes + no, sideNow = side === 1 ? yes : no;
@@ -149,7 +160,11 @@ export default function GafferApp() {
   const [muted, setMuted] = useState(false); // mirrors MONEY_MUTED for re-render; value itself unused
   const [onboarded, setOnboarded] = useState(true); // three-card intro; true until mount check so it never flashes
   const [spoiler, setSpoiler] = useState(false); // mirrors SPOILER_SAFE for re-render
-  const [ageOk, setAgeOk] = useState(true); // 18+ gate; set false on mount until confirmed
+  // 18+ confirmation lives in a ref, not state: the gate RE-RUNS the action that opened it, and a
+  // state update wouldn't be visible to that already-captured closure — it would bounce off the gate
+  // forever. The ref flips synchronously, so the retried call sails through.
+  const ageOkRef = useRef(true);
+  const [agePrompt, setAgePrompt] = useState<null | (() => void)>(null); // the action waiting behind the gate
   const [cfg, setCfg] = useState<{ rakeBps: number; maxRakeBps: number; onWinningsOnly: boolean }>({ rakeBps: 0, maxRakeBps: 500, onWinningsOnly: true });
   const [fixtures, setFixtures] = useState<any[]>([]);
   const [selectedFixture, setSelectedFixture] = useState<number>(18172379);
@@ -159,6 +174,20 @@ export default function GafferApp() {
 
   const userId = address;
   const flash = (msg: string, kind: "ok" | "err" = "ok") => { setToast({ msg, kind }); setTimeout(() => setToast(null), 3200); };
+
+  /** The 18+ gate, asked at the money — not at the door.
+   *
+   * Every app in the category that wins on first-run defers its signup wall: you browse the board, tap a
+   * side and build a slip before anyone asks you anything. A gate on the first frame is the single most
+   * expensive thing you can put in front of a stranger, and we were charging it for a screen that costs
+   * nothing to show. So: browsing, the free daily call, and building a slip are all open. The gate stands
+   * exactly where the obligation begins — putting coins on a pool — and when it clears it RUNS the action
+   * that opened it, so the tap is never spent on the gate itself.
+   */
+  const gateAge = (fn: () => void) => {
+    if (ageOkRef.current) { fn(); return; }
+    setAgePrompt(() => fn);
+  };
   // Every PAID moment is kept as a receipt on the device — the wall of your greatest calls (You tab).
   const keepReceipt = (r: any) => {
     try {
@@ -170,16 +199,16 @@ export default function GafferApp() {
 
   const refresh = useCallback(async () => {
     try {
-      const [mk, pl] = await Promise.all([getMarkets(), listParlays()]);
+      const [mk, pl] = await Promise.all([getMarkets(), getParlays()]);
       // Markets carry their own fixture names (server-joined from the durable cache), so a pool on a
       // match that has dropped off the live slate still names itself instead of "Home v Away".
       learnFixtures(mk as any[]);
       setMarkets(mk); setParlays(pl);
-      if (kernel) { setBal(await kernel.balanceSol()); setPositions(await kernel.myPositions()); }
+      if (kernel) { setBal(await kernel.balanceSol()); setPositions(await getPositions(address)); }
     } catch {
       // Keep the last-known-good view rather than a stuck spinner; the next tick retries.
     } finally { setLoading(false); }
-  }, [kernel]);
+  }, [kernel, address]);
 
   useEffect(() => {
     const today = day();
@@ -189,7 +218,7 @@ export default function GafferApp() {
     setSquadCode(localStorage.getItem("gaffer_squad") || "");
     MONEY_MUTED = localStorage.getItem("gaffer_mute_money") === "1"; setMuted(MONEY_MUTED);
     SPOILER_SAFE = localStorage.getItem("gaffer_spoiler_safe") === "1"; setSpoiler(SPOILER_SAFE);
-    setAgeOk(localStorage.getItem("gaffer_age_ok") === "1");
+    ageOkRef.current = localStorage.getItem("gaffer_age_ok") === "1";
     setOnboarded(localStorage.getItem("gaffer_onboarded") === "1");
     getConfig().then(setCfg);
     const sp = new URLSearchParams(window.location.search).get("squad");
@@ -395,6 +424,7 @@ export default function GafferApp() {
     } else { setFreePicked(false); flash("Couldn't lock your pick", "err"); }
   };
   const fund = async () => {
+    if (!ageOkRef.current) { gateAge(() => { void fund(); }); return; }
     if (!address) { if (mode === "privy") login(); return; }
     setBusy("fund");
     try {
@@ -410,6 +440,7 @@ export default function GafferApp() {
   };
   const doStake = async () => {
     if (!sheet) return;
+    if (!ageOkRef.current) { gateAge(() => { void doStake(); }); return; }
     if (!kernel) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return; }
     setBusy("stake");
     try {
@@ -519,12 +550,12 @@ export default function GafferApp() {
   const leaveSquad = () => { setSquadCode(""); setSquadData(null); localStorage.removeItem("gaffer_squad"); localStorage.removeItem("gaffer_squad_token"); flash("Left the squad"); };
 
   // ── Multi-call slip (parlay): all calls must land (Power). One match per slip in v1. ──
-  const addToSlip = (m: MarketView) => {
+  const addToSlip = (m: MarketView, side: number = 1) => {
     if (m.status !== 0) { flash("That pool has closed", "err"); return; }
     if (slip.find((s) => s.market.pubkey === m.pubkey)) { flash("Already in your slip"); return; }
     if (slip.length > 0 && slip[0].market.fixtureId !== m.fixtureId) { flash("One match per slip for now", "err"); return; }
     if (slip.length >= 8) { flash("Max 8 calls in a slip", "err"); return; }
-    setSlip([...slip, { market: m, q: label(m).q, side: 1 }]); flash("Added to your slip");
+    setSlip([...slip, { market: m, q: label(m).q, side }]); flash("Added to your slip");
   };
   const removeFromSlip = (pubkey: string) => setSlip(slip.filter((s) => s.market.pubkey !== pubkey));
   /** S3 — edit a leg before the lock: flip which side of that call you're actually on. */
@@ -536,6 +567,7 @@ export default function GafferApp() {
    * pot goes to the people who called every leg. Two genuinely different bets, one slip. */
   const placeSlip = async (stakeSol: number, shape: "power" | "flex" = "power") => {
     if (slip.length < 2) { flash("Add at least 2 calls to a slip", "err"); return; }
+    if (!ageOkRef.current) { gateAge(() => { void placeSlip(stakeSol, shape); }); return; }
     const need = shape === "flex" ? kernel : parlay;
     if (!need) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return; }
     setBusy("slip");
@@ -563,6 +595,7 @@ export default function GafferApp() {
     } catch (e: any) { flash(prettyErr(e), "err"); } finally { setBusy(null); }
   };
   const fadeParlayFn = async (p: ParlayView) => {
+    if (!ageOkRef.current) { gateAge(() => { void fadeParlayFn(p); }); return; }
     if (!parlay) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return; }
     setBusy("pfade:" + p.pubkey);
     try {
@@ -603,7 +636,12 @@ export default function GafferApp() {
 
   const toggleMute = () => { const v = !MONEY_MUTED; setMoneyMuted(v); setMuted(v); };
   const toggleSpoiler = () => { const v = !SPOILER_SAFE; setSpoilerSafe(v); setSpoiler(v); };
-  const confirmAge = () => { localStorage.setItem("gaffer_age_ok", "1"); setAgeOk(true); };
+  const confirmAge = () => {
+    localStorage.setItem("gaffer_age_ok", "1");
+    ageOkRef.current = true;
+    const run = agePrompt; setAgePrompt(null);
+    run?.();   // the gate never costs you the tap that opened it
+  };
   void muted; void spoiler; // referenced only to re-render gated surfaces when a switch flips
   const shared = { markets, label, busy, setSheet, settle, claim, collect, setDetail, cfg };
 
@@ -696,10 +734,23 @@ export default function GafferApp() {
       )}
       {DEV && !paid && <button onClick={() => setPaid({ amount: 61.4, q: "Egypt to score before half-time?", when: new Date().toLocaleString(), calledAt: 23, staked: 5, mult: 12.28, sig: "" })} className="fixed bottom-40 right-3 z-30 px-3 py-2 rounded-lg bg-[var(--ink)] text-white mono text-[10px] opacity-60">▸ preview PAID</button>}
       {slip.length > 0 && !slipOpen && <button onClick={() => setSlipOpen(true)} className="fixed bottom-[120px] left-1/2 -translate-x-1/2 z-30 px-5 py-3 rounded-full bg-[var(--green)] text-white font-bold shadow-lg">Slip · {slip.length} call{slip.length === 1 ? "" : "s"} →</button>}
-      {slipOpen && <SlipSheet slip={slip} removeFromSlip={removeFromSlip} flipLeg={flipLeg} placeSlip={placeSlip} close={() => setSlipOpen(false)} busy={busy} />}
+      {slipOpen && (
+        <SlipSheet
+          slip={slip} removeFromSlip={removeFromSlip} flipLeg={flipLeg} placeSlip={placeSlip}
+          close={() => setSlipOpen(false)} busy={busy} label={label}
+          /* Everything still open on this slip's match that isn't already a leg — so a one-call slip can
+             be completed without closing the sheet to go hunting for the second call. */
+          candidates={markets.filter((m) =>
+            m.status === 0 && Number(m.lockTs) > Math.floor(Date.now() / 1000) && realMarket(m) &&
+            (slip.length === 0 || m.fixtureId === slip[0].market.fixtureId) &&
+            !slip.some((s) => s.market.pubkey === m.pubkey))}
+          addToSlip={addToSlip}
+          backSingle={(m: MarketView, side: number) => { setSlipOpen(false); setSheet({ m, side }); }}
+        />
+      )}
       {/* Toast always sits highest in the bottom stack (nav 0–72 · call ticker 72 · slip 120 · toast 176), so it never overlaps a pill or a button. */}
       {toast && <div className={`fixed bottom-[176px] left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-lg ${toast.kind === "ok" ? "bg-[var(--ink)]" : "bg-red-600"}`}>{toast.msg}</div>}
-      {ageOk && !onboarded && (
+      {!onboarded && (
         <Onboarding
           onDone={() => { localStorage.setItem("gaffer_onboarded", "1"); setOnboarded(true); }}
           onFreePick={(side) => freePick(side)}
@@ -725,21 +776,22 @@ export default function GafferApp() {
           }}
         />
       )}
-      {!ageOk && <AgeGate onConfirm={confirmAge} />}
+      {agePrompt && <AgeGate onConfirm={confirmAge} onCancel={() => setAgePrompt(null)} />}
     </div>
   );
 }
 
-// 18+ gate — shown once, before anything else, and required to enter. Real-money stakes make this a
-// baseline compliance surface (age + jurisdiction), not decoration.
-function AgeGate({ onConfirm }: any) {
+// 18+ gate — asked the first time you back a call with coins, never on arrival. Look, browse, take the
+// free call, build a slip: all open. The moment you put something on a pool, we ask once, and remember.
+function AgeGate({ onConfirm, onCancel }: any) {
   return (
     <div className="fixed inset-0 z-[60] bg-[var(--ink)] text-white flex flex-col items-center justify-center px-8 text-center">
       <Logo />
-      <div className="text-2xl font-extrabold tracking-tight mt-5">Quick one before you play</div>
-      <p className="text-[15px] text-white/80 mt-3 leading-relaxed max-w-xs">GAFFER is an 18+ prediction game. Today it runs on <b className="text-white">free play-coins with no cash value</b> — you never buy in. By entering you confirm you&apos;re <b className="text-white">18 or older</b>.</p>
-      <button onClick={onConfirm} className="mt-7 w-full max-w-xs h-14 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold">I&apos;m 18+ — let me in</button>
-      <p className="mono text-[10px] text-white/40 mt-4 max-w-xs leading-relaxed">Play for fun. If real-money play launches, it will be 18+ only and only where legal. You can hide all amounts anytime from the You tab.</p>
+      <div className="text-2xl font-extrabold tracking-tight mt-5">One thing before you back it</div>
+      <p className="text-[15px] text-white/80 mt-3 leading-relaxed max-w-xs">GAFFER is 18+. Today it runs on <b className="text-white">free play-coins with no cash value</b> — you never buy in. Confirm you&apos;re <b className="text-white">18 or older</b> and your call goes on.</p>
+      <button onClick={onConfirm} className="mt-7 w-full max-w-xs h-14 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold">I&apos;m 18+ — put my call on</button>
+      <button onClick={onCancel} className="mt-3 text-[13px] text-white/50 underline underline-offset-4">Not yet — keep looking around</button>
+      <p className="mono text-[10px] text-white/40 mt-5 max-w-xs leading-relaxed">Play for fun. If real-money play launches, it will be 18+ only and only where legal. You can hide all amounts anytime from the You tab.</p>
     </div>
   );
 }
@@ -1499,6 +1551,7 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
   return (
     <div>
       <MatchBar fixtures={fixtures} selected={selectedFixture} onSelect={onSelectFixture} />
+      <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} />
       <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
         <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full" style={{ background: "radial-gradient(circle, rgba(5,150,105,.5), transparent 70%)" }} />
         <div className="relative">
@@ -1580,6 +1633,77 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
       <KnockoutBoard fixtures={fixtures} onSelect={onSelectFixture} />
       <PlayHub onGo={onGo} onRelive={onRelive} reliveId={latestFinished} />
     </div>
+  );
+}
+
+/** The answer, above the fold.
+ *
+ * Apple Sports' whole thesis is that a fan wants the score before they want anything else, and
+ * OneFootball is the category's cautionary tale for burying it. We were burying it too: nine stacked
+ * cards and, on a match that was actually being played, no scoreline anywhere on Today.
+ *
+ * So this sits directly under the match rail and answers the only two questions a fan has arrived with:
+ * *what's the score* and *how am I doing*. The score is read off the same signed feed everything else
+ * settles on. When the feed hasn't reported a scoreline we render nothing rather than a fabricated 0–0.
+ */
+function LiveNow({ fixtureId, markets, positions, onOpen }: { fixtureId: number; markets: MarketView[]; positions: any[]; onOpen: (m: MarketView) => void }) {
+  const [pulse, setPulse] = useState<any>(null);
+  useEffect(() => {
+    if (!fixtureId) return;
+    let alive = true;
+    const read = () => livePulse(fixtureId).then((p) => { if (alive) setPulse(p); }).catch(() => {});
+    read();
+    if (!POLL) return () => { alive = false; };
+    const t = setInterval(read, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, [fixtureId]);
+
+  if (!pulse || pulse.homeGoals == null) return null;
+  const f = fx(fixtureId);
+  const clock = pulse.finished ? "FT" : pulse.atHalftime ? "HT" : pulse.clockSeconds != null ? `${Math.floor(pulse.clockSeconds / 60)}'` : null;
+
+  // Your stake on this match, and what it's worth if it lands. One line, no navigation.
+  const mine = positions
+    .filter((p: any) => !p.claimed && p.amount > 0)
+    .map((p: any) => ({ p, m: markets.find((x) => x.pubkey === p.market) }))
+    .filter((x): x is { p: any; m: MarketView } => !!x.m && Number(x.m.fixtureId) === fixtureId && (x.m.status === 0 || (x.m.status === 1 && x.p.side === 1)));
+  const first = mine.find((x: any) => x.m.status === 1) || mine[0];
+  const won = first?.m.status === 1;
+  const toWin = first ? heldPayout(first.m, first.p.side, first.p.amount) : 0;
+
+  return (
+    <button
+      onClick={() => first && onOpen(first.m)}
+      disabled={!first}
+      className="w-full text-left bg-white border border-[var(--line)] rounded-2xl px-4 py-3 mb-3 disabled:cursor-default">
+      <div className="flex items-center gap-3">
+        <span className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+          <span className="font-bold text-right leading-tight truncate text-[15px]">{f.home}</span>
+          <Flag name={f.home} size={18} round />
+        </span>
+        <span className="text-[26px] font-extrabold tabular-nums leading-none px-0.5">{pulse.homeGoals}<span className="text-[var(--muted)] mx-1.5">–</span>{pulse.awayGoals}</span>
+        <span className="flex items-center gap-2 flex-1 min-w-0">
+          <Flag name={f.away} size={18} round />
+          <span className="font-bold leading-tight truncate text-[15px]">{f.away}</span>
+        </span>
+      </div>
+      <div className="flex items-center justify-center gap-2 mt-1.5">
+        {pulse.running && <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] gf-pulse" />}
+        <span className={`mono text-[10px] tracking-widest uppercase ${pulse.running ? "text-[var(--green)]" : "text-[#9CA3AF]"}`}>
+          {pulse.running ? `LIVE · ${clock}` : clock}
+        </span>
+      </div>
+      {first && (
+        <div className="mt-2.5 pt-2.5 border-t border-[var(--line)] flex items-center justify-between gap-2">
+          <span className="text-[13px] font-semibold truncate">
+            You&apos;re on <b className={first.p.side === 1 ? "text-[var(--green)]" : ""}>{first.p.side === 1 ? "YES" : "NO"}</b> · {label(first.m).q}?
+          </span>
+          <span className={`text-[13px] font-extrabold shrink-0 ${won ? "text-[var(--green)]" : "text-[var(--muted)]"}`}>
+            {won ? `Collect ${money(toWin)}` : `to win ≈${money(toWin)}`}
+          </span>
+        </div>
+      )}
+    </button>
   );
 }
 
@@ -1707,7 +1831,18 @@ function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot
   );
 }
 
-function SlipSheet({ slip, removeFromSlip, flipLeg, placeSlip, close, busy }: any) {
+/** The slip.
+ *
+ * Two rules, learned the hard way from the category:
+ *
+ *  1. **A slip must never block the path to its own completion.** This sheet used to show a dead,
+ *     disabled "Add 2+ calls" button over an overlay that hid the very buttons you needed. The pools you
+ *     can add now live INSIDE the sheet, and when there's genuinely nothing to add we offer the one thing
+ *     that does work: back the single call on its own.
+ *  2. **Lead with the money, not the maths.** "4.00×" is a number for someone who already thinks in
+ *     multiples. Everyone else thinks *risk this, win that*. The multiple stays, small, underneath.
+ */
+function SlipSheet({ slip, removeFromSlip, flipLeg, placeSlip, close, busy, candidates = [], addToSlip, backSingle, label }: any) {
   const [stake, setStake] = useState(0.05);
   const [shape, setShape] = useState<"power" | "flex">("power");
 
@@ -1743,10 +1878,36 @@ function SlipSheet({ slip, removeFromSlip, flipLeg, placeSlip, close, busy }: an
               </button>
               <span className="flex-1 text-sm font-semibold truncate">{s.q}?</span>
               <span className="mono text-[10px] text-[var(--muted)] tabular-nums">{legMult(s).toFixed(2)}×</span>
-              <button onClick={() => removeFromSlip(s.market.pubkey)} className="mono text-[11px] text-[var(--muted)]">remove</button>
+              <button onClick={() => removeFromSlip(s.market.pubkey)} aria-label={`Remove ${s.q}`}
+                className="shrink-0 w-8 h-8 rounded-lg border border-[var(--line)] bg-white text-[var(--muted)] flex items-center justify-center active:scale-95 transition-transform">✕</button>
             </div>
           ))}
         </div>
+
+        {/* The way out of a one-call slip, in the sheet — never behind it. */}
+        {slip.length < 2 && (
+          <div className="mt-4 rounded-2xl border-2 border-dashed border-[var(--line)] p-3">
+            <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF] px-1">
+              {candidates.length ? "Add one more to place a slip" : "Nothing else open on this match"}
+            </div>
+            {candidates.length > 0 ? (
+              <div className="mt-2 space-y-2">
+                {candidates.slice(0, 4).map((m: MarketView) => (
+                  <div key={m.pubkey} className="flex items-center gap-2">
+                    <span className="flex-1 text-[13px] font-semibold truncate">{label(m).q}?</span>
+                    <button onClick={() => addToSlip(m, 1)} className="mono text-[10px] font-extrabold tracking-widest rounded px-2.5 py-1.5 bg-[var(--green)] text-white active:scale-95 transition-transform">YES</button>
+                    <button onClick={() => addToSlip(m, 2)} className="mono text-[10px] font-extrabold tracking-widest rounded px-2.5 py-1.5 bg-[var(--ink)] text-white active:scale-95 transition-transform">NO</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <button onClick={() => backSingle(slip[0].market, slip[0].side)} className="mt-2 w-full h-12 rounded-xl bg-[var(--ink)] text-white font-bold">
+                Back this one on its own →
+              </button>
+            )}
+          </div>
+        )}
+        {slip.length >= 2 && (
         <div className="mt-4 flex gap-2">
           {(["power", "flex"] as const).map((k) => (
             <button key={k} onClick={() => setShape(k)}
@@ -1755,21 +1916,31 @@ function SlipSheet({ slip, removeFromSlip, flipLeg, placeSlip, close, busy }: an
             </button>
           ))}
         </div>
-        <div className="mt-3 rounded-2xl bg-[var(--ink)] text-white p-4">
-          <div className="flex items-center justify-between">
-            <div className="mono text-[10px] uppercase tracking-widest text-[var(--greenb)]">{shape === "power" ? "If they ALL land" : "Each call pays alone"}</div>
-            <div className="text-2xl font-black tabular-nums text-[var(--greenb)] transition-all duration-300">{mult.toFixed(2)}×</div>
-          </div>
-          <div className="text-[13px] text-white/90 mt-1">
-            {shape === "power"
-              ? `You split the whole pot with everyone who also backed all ${slip.length} to land — and it grows every time someone bets the slip busts. One miss and the slip is off.`
-              : `Your stake is split across the ${slip.length} calls. Each one settles on its own result, so a miss costs you that call and nothing else.`}
-          </div>
-        </div>
+        )}
+        {slip.length >= 2 && <>
         <div className="mt-4 mono text-[10px] uppercase tracking-widest text-[#9CA3AF]">Stake</div>
         <div className="flex gap-2 mt-2">{[0.02, 0.05, 0.1].map((v) => (<button key={v} onClick={() => setStake(v)} className={`flex-1 h-11 rounded-xl font-semibold ${stake === v ? "border-2 border-[var(--green)] text-[var(--green)]" : "bg-[#FAFAF7] border border-[var(--line)]"}`}>{v}</button>))}</div>
-        <button disabled={busy === "slip" || slip.length < 2} onClick={() => placeSlip(stake, shape)} className="mt-4 w-full h-14 rounded-2xl bg-[var(--green)] text-white text-lg font-bold disabled:opacity-50">{busy === "slip" ? "Placing…" : slip.length < 2 ? "Add 2+ calls" : `Place ${shape === "power" ? "Power" : "Flex"} slip · ${stake}`}</button>
+
+        {/* Risk this → win that. The multiple is the footnote, not the headline. */}
+        <div className="mt-3 rounded-2xl bg-[var(--ink)] text-white p-4">
+          <div className="mono text-[10px] uppercase tracking-widest text-[var(--greenb)]">{shape === "power" ? "If they ALL land" : "Each call pays alone"}</div>
+          <div className="mt-1.5 flex items-end justify-between gap-3">
+            <div className="text-[15px] font-semibold text-white/70 leading-tight">Risk {fmtAmt(stake)}<br />to win</div>
+            <div className="text-right">
+              <div className="text-[34px] leading-none font-black tabular-nums text-[var(--greenb)] transition-all duration-300">≈{money(stake * mult)}</div>
+              <div className="mono text-[10px] text-white/40 mt-1 tabular-nums">{mult.toFixed(2)}× your stake · est.</div>
+            </div>
+          </div>
+          <div className="text-[12px] text-white/70 mt-2.5 leading-snug">
+            {shape === "power"
+              ? `Estimated: you split the whole pot with everyone who also backed all ${slip.length} to land, so it grows every time someone bets the slip busts. One miss and the slip is off.`
+              : `Estimated: your stake is split across the ${slip.length} calls. Each settles on its own result, so a miss costs you that call and nothing else.`}
+          </div>
+        </div>
+
+        <button disabled={busy === "slip"} onClick={() => placeSlip(stake, shape)} className="mt-4 w-full h-14 rounded-2xl bg-[var(--green)] text-white text-lg font-bold disabled:opacity-50">{busy === "slip" ? "Placing…" : `Place ${shape === "power" ? "Power" : "Flex"} slip · ${stake}`}</button>
         <p className="text-center text-xs text-[#9CA3AF] mt-3">{shape === "power" ? "All calls in one match · collect the moment the last one lands." : "All calls in one match · each collects the moment it lands."}</p>
+        </>}
       </div>
     </div>
   );

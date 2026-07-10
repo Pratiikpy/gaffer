@@ -40,13 +40,16 @@ const chapter = async (page, name) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Wait for `fn` to return truthy, or explain what never happened. */
-async function until(page, label, fn, timeoutMs = 60_000) {
+async function until(page, label, fn, timeoutMs = 60_000, arg = undefined) {
   const deadline = Date.now() + timeoutMs;
+  let lastErr = null;
   while (Date.now() < deadline) {
-    if (await page.evaluate(fn).catch(() => false)) return true;
+    try { if (await page.evaluate(fn, arg)) return true; }
+    catch (e) { lastErr = e; }   // a ReferenceError here means the predicate closed over a Node variable
     await sleep(700);
   }
-  throw new Error(`timed out waiting for: ${label}`);
+  const why = lastErr ? " (" + String(lastErr.message).split(/\r?\n/)[0] + ")" : "";
+  throw new Error(`timed out waiting for: ${label}${why}`);
 }
 
 const text = (page) => page.evaluate(() => document.body.innerText);
@@ -67,14 +70,41 @@ const clickByText = async (page, label, exact = true) => {
 const findHero = async () => (await fetch(`${BASE}/api/markets`).then((r) => r.json())).markets
   .find((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 1 && m.threshold === 0);
 
-/** Pick a question that is not already on the board — the app now refuses duplicates, rightly. */
+/** Pick a question the compiler will actually accept.
+ *
+ * Three things can refuse it, and all three are correct. It must not already be on the board (duplicates
+ * split a room's money). It must not already be true (a pool on a goal that has gone in is a free pot for
+ * whoever joins first). And the model refuses counts it considers absurd, which is its own good taste. So
+ * we choose from a short list of things a fan would really say, and check the first two ourselves.
+ */
 const freeQuestion = async () => {
-  const open = (await fetch(`${BASE}/api/markets`).then((r) => r.json())).markets
-    .filter((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 2)
-    .map((m) => m.threshold);
-  const phrases = ["Bosnia to score", "Bosnia to score twice", "Bosnia to bag a hat-trick", "Bosnia to score 4+ goals", "Bosnia to score 5+ goals"];
-  for (let t = 1; t < phrases.length; t++) if (!open.includes(t)) return { text: phrases[t], atLeast: t + 1 };
-  throw new Error("every Bosnia question is already open on the hero match");
+  const [{ markets }, live] = await Promise.all([
+    fetch(`${BASE}/api/markets`).then((r) => r.json()),
+    fetch(`${BASE}/api/live?fixture=18172379`).then((r) => r.json()),
+  ]);
+  const current = { 1: live.homeGoals ?? 0, 2: live.awayGoals ?? 0 };
+  const open = markets.filter((m) => m.status === 0 && m.fixtureId === "18172379");
+  const taken = (statKey, threshold) => open.some((m) => m.statKey === statKey && m.threshold === threshold);
+
+  const named = [
+    { statKey: 1, threshold: 2, text: "USA to bag a hat-trick" },
+    { statKey: 2, threshold: 2, text: "Bosnia to bag a hat-trick" },
+    { statKey: 2, threshold: 1, text: "Bosnia to score twice" },
+    { statKey: 1, threshold: 3, text: "USA to score four" },
+  ];
+  // Repeated takes saturate the nice questions, so fall back to plain counts. The teams' names come from
+  // the fixture, not from us, so the model still has to do the mapping.
+  const fallback = [];
+  for (let t = 3; t <= 9; t++) {
+    fallback.push({ statKey: 1, threshold: t, text: `USA to score ${t + 1}+ goals` });
+    fallback.push({ statKey: 2, threshold: t, text: `Bosnia to score ${t + 1}+ goals` });
+  }
+  for (const c of [...named, ...fallback]) {
+    if (taken(c.statKey, c.threshold)) continue;
+    if (current[c.statKey] > c.threshold) continue;   // already happened; the server would veto it
+    return { text: c.text, atLeast: c.threshold + 1 };
+  }
+  throw new Error("every question on the hero match is already open");
 };
 
 let hero = await findHero();
@@ -99,6 +129,20 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const errors = [];
 page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+
+// Toasts live 3.2 seconds. A failure diagnosed two minutes later would never see the one that explains
+// it, so record them as they appear.
+await page.addInitScript(() => {
+  window.__toasts = [];
+  new MutationObserver(() => {
+    document.querySelectorAll("div").forEach((d) => {
+      const c = typeof d.className === "string" ? d.className : "";
+      if (!c.includes("fixed") || !c.includes("bottom-[176px]")) return;
+      const t = d.innerText.trim();
+      if (t && window.__toasts[window.__toasts.length - 1] !== t) window.__toasts.push(t);
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+});
 
 try {
   console.log(`filming ${BASE} → ${OUT}\n`);
@@ -137,6 +181,8 @@ try {
   await sleep(900);
   await chapter(page, "ask it how youd say it to a mate");
 
+  // Surface a refusal immediately: a toast, not a two-minute wait for a card that will never appear.
+  page.on("console", () => {});
   await clickByText(page, "Open it");
   // The gate stands here, at the money — and it runs the action it interrupted.
   await until(page, "the 18+ gate at the money", () => /before you back it/i.test(document.body.innerText), 25_000);
@@ -146,15 +192,22 @@ try {
 
   // Wait for the CARD, not for a toast that mentions it — and put it on screen. A frame that claims a
   // pool was opened has to show the pool.
-  await until(page, "the pool card the fan just minted", () => {
+  await until(page, "the pool card the fan just minted", (atLeast) => {
     const card = [...document.querySelectorAll("div")].find((d) =>
       typeof d.className === "string" && d.className.includes("rounded-2xl") &&
-      new RegExp(`${ASK.atLeast}\+ goals\?`).test(d.innerText) &&
+      // A plain substring, deliberately: inside a template literal `\+` collapses to `+`, so the regex
+      // this built was `5+ goals?`, which matches "5 goals" and never "5+ goals?".
+      d.innerText.includes(`${atLeast}+ goals?`) &&
       [...d.querySelectorAll("button")].some((b) => b.textContent.trim() === "YES"));
     if (!card) return false;
     card.scrollIntoView({ block: "center" });
     return true;
-  }, 120_000);
+  }, 120_000, ASK.atLeast).catch(async (e) => {
+    // Say what actually went wrong. "Goals only for now" is the card's standing hint, always on screen,
+    // and must never be mistaken for the answer. The toast carries the answer.
+    const toasts = await page.evaluate(() => window.__toasts || []);
+    throw new Error(toasts.length ? `the app said: ${toasts.join(" | ")}` : e.message);
+  });
   await sleep(2400);
   await chapter(page, "a pool the fan opened, minted by their own wallet");
 

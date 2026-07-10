@@ -58,3 +58,6 @@ FEATURE-AUDIT.md
 
 # Production keeper secrets — local only.
 .keeper.env
+
+# Dumped program binaries used by the settle_no harness — fetched, not committed.
+latch/programs/latch/tests/fixtures/*.so

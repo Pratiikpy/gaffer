@@ -4,7 +4,7 @@
 
 ### The World Cup, turned into a game you play with your mates — and the payout is one no one can refuse.
 
-**[▶ Play the live demo — gaffer-cyan.vercel.app](https://gaffer-cyan.vercel.app)**
+**[▶ Play it live — gaffer-cyan.vercel.app](https://gaffer-cyan.vercel.app)** · _demo video: filmed during a live knockout match, linked here on submission_
 
 Call what happens on the pitch, together, in real time. Win, and the pot pays you the moment the match proves you right — from a pool with no house in it, so no one can void it, limit you, or stall your payout. Ever.
 

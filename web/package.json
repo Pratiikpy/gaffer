@@ -12,7 +12,7 @@
     "migrate": "node scripts/migrate.mjs",
     "test:economy": "node scripts/test-economy.mjs",
     "test:live": "node scripts/test-live.mjs",
-    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs && node scripts/test-shells.mjs && node scripts/test-push.mjs && node scripts/test-cache.mjs && node scripts/test-payout.mjs && node scripts/test-settle-outcome.mjs && node scripts/test-admin.mjs",
+    "test": "node scripts/test-economy.mjs && node scripts/test-live.mjs && node scripts/test-squad.mjs && node scripts/test-draft.mjs && node scripts/test-shells.mjs && node scripts/test-push.mjs && node scripts/test-cache.mjs && node scripts/test-payout.mjs && node scripts/test-settle-outcome.mjs && node scripts/test-admin.mjs && node scripts/test-grammar.mjs",
     "test:squad": "node scripts/test-squad.mjs",
     "test:draft": "node scripts/test-draft.mjs",
     "test:shells": "node scripts/test-shells.mjs",
@@ -21,7 +21,8 @@
     "test:cache": "node scripts/test-cache.mjs",
     "test:payout": "node scripts/test-payout.mjs",
     "test:settle": "node scripts/test-settle-outcome.mjs",
-    "test:admin": "node scripts/test-admin.mjs"
+    "test:admin": "node scripts/test-admin.mjs",
+    "test:grammar": "node scripts/test-grammar.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

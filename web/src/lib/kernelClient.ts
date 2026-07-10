@@ -28,6 +28,26 @@ export class BrowserKernel {
 
   async balanceSol(): Promise<number> { return (await this.conn.getBalance(this.wallet.publicKey)) / 1e9; }
 
+  private marketPda(id: BN) { return PublicKey.findProgramAddressSync([Buffer.from("market"), id.toArrayLike(Buffer, "le", 8)], PROGRAM_ID)[0]; }
+
+  /** Mint a pool the fan asked for, signed and rent-funded by the fan.
+   *
+   * The server compiles the question and validates the predicate, but it does not create the market —
+   * the person who wants the pool pays for it, exactly as `create_parlay` already works. That keeps
+   * user-generated markets from becoming a way to drain the server's wallet, and it means an open
+   * question costs us nothing to offer.
+   *
+   * `create_market` refuses any comparison but GreaterThan, and requires `now < lock_ts <= expiry_ts`. */
+  async createMarket(p: { fixtureId: number; statKey: number; period: number; threshold: number; comparison: number }, expirySecs: number, lockSecs?: number): Promise<string> {
+    const id = new BN(Date.now()).mul(new BN(1000)).add(new BN(Math.floor(Math.random() * 1000))); // ms + entropy → no same-ms PDA collision
+    const market = this.marketPda(id);
+    const lock = lockSecs ?? expirySecs;
+    await this.program.methods
+      .createMarket(id, new BN(p.fixtureId), p.statKey, p.period, p.threshold, p.comparison, new BN(lock), new BN(expirySecs))
+      .accounts({ authority: this.wallet.publicKey, market, vault: this.vault(market), systemProgram: SystemProgram.programId }).rpc();
+    return market.toBase58();
+  }
+
   async join(marketStr: string, side: number, sol: number): Promise<string> {
     const m = new PublicKey(marketStr);
     return await this.program.methods.joinPool(side, new BN(Math.round(sol * 1e9)))

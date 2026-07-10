@@ -11,6 +11,16 @@ export async function getParlays(): Promise<ParlayView[]> {
   const r = await fetch("/api/parlays", { cache: "no-store" });
   return (await r.json()).parlays || [];
 }
+/** Ask your own question. The server compiles it into a predicate the chain can prove, or refuses.
+ *  It never creates the pool — your own wallet signs that — so an open question costs nothing to ask. */
+export type Compiled =
+  | { ok: true; question: string; team: string; fixtureId: number; market: { statKey: number; period: number; threshold: number; comparison: number } }
+  | { ok: false; reason: string };
+export async function compileMarket(text: string, fixtureId: number): Promise<Compiled> {
+  const r = await fetch("/api/compile-market", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, fixtureId }) });
+  return await r.json().catch(() => ({ ok: false as const, reason: "That didn't go through — try again." }));
+}
+
 /** Your open calls, for display. Every collect still re-reads the position from the chain first. */
 export async function getPositions(owner: string): Promise<{ market: string; side: number; amount: number; claimed: boolean }[]> {
   if (!owner) return [];

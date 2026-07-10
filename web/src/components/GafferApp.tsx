@@ -9,7 +9,7 @@ import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
 import { canInstall, onInstallable, promptInstall, isIOS, isStandalone, setBadge } from "@/lib/install";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
-import { getMarkets, getParlays, getPositions, getScores, createMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList, joinNationRoom } from "@/lib/api";
+import { getMarkets, getParlays, getPositions, getScores, createMarket, compileMarket, squad as squadApi, squadGet, settleParlay, points as pointsApi, pointsGet, streakGrid as streakGridApi, streakGridText, getNations, getFixtures, getConfig, provisionHero, punditLine, hiloDeal, hiloGuess, roundsGet, roundOpen, roundCall, economyGet, economyDo, type Economy, livePulse, twistCall, type LivePulse, mysteryList, joinNationRoom } from "@/lib/api";
 import { prettyErr } from "@/lib/errcopy";
 import { Flag, FlagPair } from "@/components/TeamBits";
 import { team } from "@/lib/teams";
@@ -438,6 +438,32 @@ export default function GafferApp() {
     try { const r = await createMarket({ fixtureId, statKey: 1, period: 4, threshold: 0, comparison: 0 }); if (r.error) throw new Error(r.error); flash("Pool live"); await refresh(); }
     catch (e: any) { flash(prettyErr(e, "neutral"), "err"); } finally { setBusy(null); }
   };
+
+  /** Ask your own question.
+   *
+   * The server turns the sentence into a predicate, and refuses anything the chain couldn't prove or that
+   * has already happened. The pool itself is minted by THIS wallet — the fan who wants the question pays
+   * its rent, exactly as a slip does — so an open question costs us nothing to offer and can't be used to
+   * drain anything. The age gate stands here because minting spends coins.
+   */
+  const askMarket = async (text: string): Promise<boolean> => {
+    if (!ageOkRef.current) { gateAge(() => { void askMarket(text); }); return false; }
+    if (!kernel) { if (mode === "privy") login(); else flash("One sec — getting you set up.", "err"); return false; }
+    setBusy("ask");
+    try {
+      const c = await compileMarket(text, selectedFixture);
+      if (!c.ok) { flash(c.reason, "err"); return false; }
+      // A week to settle, with the betting window running to the same instant — the shape every other
+      // pool uses. The keeper closes it the moment the goal is anchored.
+      const expiry = Math.floor(Date.now() / 1000) + 7 * 86400;
+      await kernel.createMarket({ fixtureId: c.fixtureId, ...c.market }, expiry);
+      flash(`Your pool is live — ${c.question}`);
+      await refresh();
+      return true;
+    } catch (e: any) { flash(prettyErr(e), "err"); return false; }
+    finally { setBusy(null); }
+  };
+
   const doStake = async () => {
     if (!sheet) return;
     if (!ageOkRef.current) { gateAge(() => { void doStake(); }); return; }
@@ -659,7 +685,7 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} joinTribe={joinTribe} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
@@ -1531,7 +1557,7 @@ function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () =
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
+function Today({ markets, loading, label, busy, spinUp, askMarket, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -1583,6 +1609,8 @@ function Today({ markets, loading, label, busy, spinUp, setSheet, settle, claim,
       {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} onRelive={onRelive} /> : null; })()}
 
       {DEV && <button disabled={busy === "spin"} onClick={() => spinUp(selectedFixture)} className="mt-4 w-full h-12 rounded-2xl border-2 border-dashed border-[var(--line)] text-[var(--muted)] font-semibold disabled:opacity-50">{busy === "spin" ? "Spinning up…" : `+ Spin up a pool (${selName})`}</button>}
+
+      <AskCard onAsk={askMarket} busy={busy === "ask"} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />
 
       <Section title={`Open pools · ${selName}`} />
       {loading && open.length === 0 && <div className="text-sm text-[var(--muted)] py-6 text-center">Loading today&apos;s pools…</div>}
@@ -1763,6 +1791,54 @@ function Card({ m, label, children, onOpen }: any) {
 }
 
 function Section({ title }: { title: string }) { return <div className="mono text-[10px] tracking-widest uppercase text-[#9CA3AF] mt-6 mb-2">{title}</div>; }
+
+/** Ask your own question.
+ *
+ * Every other app in the category decides what you are allowed to bet on. This is the one screen where
+ * the room writes the question — you say it in your own words, and if the match data can prove it, a pool
+ * opens on it. When it can't, it says so plainly rather than opening something it could never settle.
+ */
+function AskCard({ onAsk, busy, home, away }: { onAsk: (t: string) => Promise<boolean>; busy: boolean; home: string; away: string }) {
+  const [text, setText] = useState("");
+  const examples = [`${home} to score`, `${away} to bag a hat-trick`, `${home} to score twice`];
+  const submit = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    if (await onAsk(t)) setText("");
+  };
+  return (
+    <div className="mt-4 rounded-2xl border-2 border-dashed border-[var(--line)] p-4">
+      <div className="mono text-[10px] uppercase tracking-widest text-[#9CA3AF]">Ask your own</div>
+      <p className="text-[15px] font-bold tracking-tight mt-1">Say it how you&apos;d say it to a mate.</p>
+      <div className="flex gap-2 mt-3">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, 160))}
+          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+          placeholder={examples[0]}
+          aria-label="Ask your own question about this match"
+          className="flex-1 h-12 rounded-xl border border-[var(--line)] px-3.5 bg-[#FAFAF7] text-sm"
+        />
+        <button
+          onClick={() => void submit()}
+          disabled={busy || !text.trim()}
+          className="h-12 px-5 rounded-xl bg-[var(--ink)] text-white font-bold disabled:opacity-40">
+          {busy ? "Reading…" : "Open it"}
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mt-2.5">
+        {examples.map((e) => (
+          <button key={e} onClick={() => setText(e)} className="mono text-[10px] px-2 py-1 rounded-md bg-[#FAFAF7] border border-[var(--line)] text-[var(--muted)]">
+            {e}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[#9CA3AF] mt-2.5 leading-snug">
+        Goals only for now — anything the match data can&apos;t prove, we won&apos;t open.
+      </p>
+    </div>
+  );
+}
 
 function CallSheet({ sheet, setSheet, stake, setStake, doStake, busy, done, shot, setShot, reason, setReason, canSeal }: any) {
   if (done) return (

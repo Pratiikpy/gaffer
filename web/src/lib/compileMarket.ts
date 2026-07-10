@@ -18,6 +18,11 @@ import {
  * a free pot for whoever joins first. Neither check trusts the model, and the model cannot skip either.
  */
 
+/** What a fan is told when a question can't be opened. Ours, not the model's — and it names the teams
+ *  actually on the pitch rather than whichever two happened to be in the example. */
+const refusalFor = (home: string, away: string) =>
+  `Goals only for now — try “${home} to score” or “${away} to score twice”.`;
+
 const TOOLS: ToolSpec[] = [
   {
     type: "function",
@@ -39,11 +44,7 @@ const TOOLS: ToolSpec[] = [
     function: {
       name: "refuse",
       description: "The sentence cannot be settled from the allowed stats, or is not about this match.",
-      parameters: {
-        type: "object",
-        properties: { reason: { type: "string", description: "One short sentence, addressed to the fan." } },
-        required: ["reason"],
-      },
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
 ];
@@ -107,12 +108,11 @@ export async function compileMarket(args: {
     throw e;
   }
 
-  if (call.name === "refuse") {
-    // The model's reason is a hint, not a verdict. Keep it short and never let it become an instruction.
-    const reason = String(call.args.reason || "").slice(0, 120);
-    return { ok: false, reason: reason || "I can't settle that from the match data." };
-  }
-  if (call.name !== "propose_market") return { ok: false, reason: "I can't settle that from the match data." };
+  // A refusal is a signal, not copy. The model's own sentence never reaches the screen: it drifts
+  // off-brand the moment it is unsupervised (it offered to "price markets", and we have no house to
+  // price them), and any text it echoes back is text an injected prompt could have written. We say why
+  // ourselves, in our own words, every time.
+  if (call.name !== "propose_market") return { ok: false, reason: refusalFor(args.home, args.away) };
 
   const checked = validatePredicate(call.args);
   if (!checked.ok) return checked;

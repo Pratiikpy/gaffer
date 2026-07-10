@@ -123,8 +123,18 @@ try {
   await chapter(page, "the age gate stands at the money not the door");
   await clickByText(page, "put my call on", false);
 
-  await until(page, "the pool the fan just minted", () => /3\+ goals\?/.test(document.body.innerText), 90_000);
-  await sleep(2200);
+  // Wait for the CARD, not for a toast that mentions it — and put it on screen. A frame that claims a
+  // pool was opened has to show the pool.
+  await until(page, "the pool card the fan just minted", () => {
+    const card = [...document.querySelectorAll("div")].find((d) =>
+      typeof d.className === "string" && d.className.includes("rounded-2xl") &&
+      /3\+ goals\?/.test(d.innerText) &&
+      [...d.querySelectorAll("button")].some((b) => b.textContent.trim() === "YES"));
+    if (!card) return false;
+    card.scrollIntoView({ block: "center" });
+    return true;
+  }, 120_000);
+  await sleep(2400);
   await chapter(page, "a pool the fan opened, minted by their own wallet");
 
   // ── 3. Back a call, and watch what it pays. ──────────────────────────────────────────────────────

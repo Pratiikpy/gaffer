@@ -2313,9 +2313,13 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
 
         {/* The odds-stamp: the crowd's belief in your side the instant you locked. Low = you saw it first. */}
         {paid.calledAt != null && (
-          <div className={`mt-2 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[12px] font-bold ${contrarian ? "bg-[var(--green)]/10 text-[var(--green)]" : "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]"}`}>
-            <span>Called at {paid.calledAt}%</span>{paid.mult ? <><span className="opacity-40">·</span><span>paid {paid.mult.toFixed(2)}×</span></> : null}
-            {contrarian && <span className="ml-1">— you saw it first</span>}
+          <div className={`mt-2 rounded-xl px-3 py-2 text-[12px] font-bold text-center ${contrarian ? "bg-[var(--green)]/10 text-[var(--green)]" : "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]"}`}>
+            {/* Two lines, each whole. Three phrases on one row wrapped into ragged thirds on a phone. */}
+            <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+              <span>Called at {paid.calledAt}%</span>
+              {paid.mult ? <><span className="opacity-40">·</span><span>paid {paid.mult.toFixed(2)}×</span></> : null}
+            </div>
+            {contrarian && <div className="mt-0.5 whitespace-nowrap">you saw it first</div>}
           </div>
         )}
 

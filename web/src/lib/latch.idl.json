@@ -1199,6 +1199,120 @@
       ]
     },
     {
+      "name": "settle_no",
+      "docs": [
+        "Settle a market AGAINST its predicate: the thing was proven not to have happened, and NO takes",
+        "the pot.",
+        "",
+        "Without this, a market has exactly two endings — YES wins, or everyone is refunded — and backing",
+        "NO is strictly dominated: you lose your stake if the goal comes and you get it back if it doesn't.",
+        "You can never profit. The pool was only ever one-sided, and every \"back NO to win X\" the app",
+        "showed was a number it could not pay. That is the bug this closes.",
+        "",
+        "The asymmetry was never in the data, only in the kernel. `validate_stat` proves any comparison it",
+        "is handed, so \"it never happened\" is as provable as \"it did\":",
+        "",
+        "value(t) <= threshold   <=>   value(t) < threshold + 1        (Comparison::LessThan)",
+        "",
+        "with one binding that matters more than the arithmetic: **the snapshot must be taken after the",
+        "market closed**. A proof that Spain had not scored by minute three is true and worthless. So `ts`",
+        "must sit at or past `expiry_ts`, and the wall clock must be past `expiry_ts + VOID_GRACE_SECS` —",
+        "the same head start `void` gives the keeper to land a rightful YES first, so the NO side cannot",
+        "grief a winner by racing to settle the instant the window shuts.",
+        "",
+        "Nobody on NO? Then there is no rightful winner, and the pot is refunded rather than trapped —",
+        "exactly as `settle` does when nobody is on YES."
+      ],
+      "discriminator": [
+        197,
+        221,
+        57,
+        190,
+        72,
+        123,
+        8,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "settler",
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "daily_scores_merkle_roots"
+        },
+        {
+          "name": "txoracle_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "ts",
+          "type": "i64"
+        },
+        {
+          "name": "fixture_summary",
+          "type": {
+            "defined": {
+              "name": "ScoresBatchSummary"
+            }
+          }
+        },
+        {
+          "name": "fixture_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "main_tree_proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "ProofNode"
+              }
+            }
+          }
+        },
+        {
+          "name": "stat_a",
+          "type": {
+            "defined": {
+              "name": "StatTerm"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "settle_window",
       "docs": [
         "Step two: prove the stat MOVED by `delta` after the banked baseline, and pay.",
@@ -1323,7 +1437,15 @@
       "docs": [
         "Void an unsettled market once it is past expiry + grace, enabling refunds. The grace window",
         "gives the keeper time to settle a within-window YES first, so a NO staker cannot void a",
-        "rightful YES the instant expiry passes."
+        "rightful YES the instant expiry passes.",
+        "The last resort: nobody could prove the stat either way, so nobody wins and everybody is repaid.",
+        "",
+        "This used to be reachable two minutes after expiry, which was harmless while a market's only",
+        "endings were \"YES wins\" or \"refund\". Now that `settle_no` can pay the NO side, an early void is a",
+        "way for the losing YES side to claw its stake back out of a pot NO had rightfully won. So voiding",
+        "waits an hour: long enough that a healthy keeper — which settles within seconds of the oracle",
+        "anchoring — will always have resolved the market first, and short enough that money is never",
+        "trapped when the oracle genuinely has nothing to say."
       ],
       "discriminator": [
         55,
@@ -1625,36 +1747,41 @@
     },
     {
       "code": 6024,
+      "name": "SnapshotTooEarly",
+      "msg": "The proof predates the market's close"
+    },
+    {
+      "code": 6025,
       "name": "AlreadyClaimed",
       "msg": "Already claimed"
     },
     {
-      "code": 6025,
+      "code": 6026,
       "name": "NotWinner",
       "msg": "Caller is not on the winning side"
     },
     {
-      "code": 6026,
+      "code": 6027,
       "name": "NotResolved",
       "msg": "Market not resolved"
     },
     {
-      "code": 6027,
+      "code": 6028,
       "name": "BadLegs",
       "msg": "Invalid parlay legs"
     },
     {
-      "code": 6028,
+      "code": 6029,
       "name": "BadRake",
       "msg": "Rake exceeds the hard cap"
     },
     {
-      "code": 6029,
+      "code": 6030,
       "name": "BadFeeRecipient",
       "msg": "Fee recipient does not match config"
     },
     {
-      "code": 6030,
+      "code": 6031,
       "name": "NotConfigAuthority",
       "msg": "Caller is not the config authority"
     }

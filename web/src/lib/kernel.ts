@@ -6,7 +6,9 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import idl from "./latch.idl.json";
 import { RPC } from "./config";
 
-export const STATUS_LABEL = ["live", "paid", "refunded"];
+/** 0 open · 1 YES won · 2 refunded · 3 NO won. Index 3 exists because a market can now be settled
+ *  against its predicate — "it never happened, and the people who said so take the pot". */
+export const STATUS_LABEL = ["live", "paid", "refunded", "paid"];
 
 export function readProgram(): any {
   const conn = new Connection(RPC, "confirmed");

@@ -24,7 +24,10 @@ import { settleDuelsForMarket } from "./squadPlus";
  */
 
 export const PROGRAM_ID = new PublicKey((idl as any).address);
+/** The keeper's head start to prove a rightful YES before NO may be settled. */
 export const VOID_GRACE_SECS = 120;
+/** How long before anyone may VOID. Long, because an early void would claw a pot back from a NO winner. */
+export const RESOLVE_GRACE_SECS = 3600;
 
 const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
 
@@ -119,6 +122,59 @@ export async function settleMarket(program: any, market: string): Promise<Settle
   }
 }
 
+/** Settle a market AGAINST its predicate: prove it never happened, and pay the NO side.
+ *
+ * The mirror of `settleMarket`. It needs a proof snapshot taken at or after the market's close — a proof
+ * that Spain hadn't scored by minute three is true and worthless — so we sample the newest anchored
+ * sequences first and take the first one whose summary timestamp clears `expiry_ts`.
+ *
+ * The kernel re-checks all of that. This only finds the evidence.
+ */
+export async function settleMarketNo(program: any, market: string): Promise<SettleResult> {
+  const kp = loadServerKeypair();
+  const marketPk = new PublicKey(market);
+  const m: any = await program.account.market.fetch(marketPk);
+  if (m.status !== 0) return { settled: false, reason: "not open" };
+
+  const expiry = Number(m.expiryTs);
+  const now = Math.floor(Date.now() / 1000);
+  if (now < expiry + VOID_GRACE_SECS) return { settled: false, reason: "still open" };
+
+  const fixtureId = Number(m.fixtureId);
+  const bundle = await findProofAfter(fixtureId, m.statKey, expiry);
+  if (!bundle) return { settled: false, reason: "no anchored proof from after the close yet" };
+
+  const seedTs = Number(bundle.summary.updateStats.minTimestamp);
+  try {
+    const sig = await program.methods
+      .settleNo(new BN(seedTs), summaryOf(bundle), bundle.subTreeProof.map(node), bundle.mainTreeProof.map(node), termOf(bundle))
+      .accounts({ settler: kp.publicKey, market: marketPk, dailyScoresMerkleRoots: dsrFor(seedTs), txoracleProgram: TXORACLE })
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })]).rpc();
+
+    // Same honesty as the YES path: with nobody on NO the kernel voids and refunds instead of paying.
+    const after: any = await program.account.market.fetch(marketPk);
+    const paidNo = after.status === 3;
+    if (paidNo) await settleDuelsForMarket(market, 2).catch(() => {});
+    return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidNo ? "NO" : "VOID" };
+  } catch (e: any) {
+    return { settled: false, reason: prettyErr(e, "neutral"), code: e.error?.errorCode?.code || "" };
+  }
+}
+
+/** The newest anchored proof whose snapshot sits at or after `afterSecs`. Newest-first: the final
+ *  whistle's snapshot is the one that settles a match, and it is the last thing anchored. */
+async function findProofAfter(fixtureId: number, statKey: number, afterSecs: number): Promise<any | null> {
+  const events = await txline().historicalEvents(fixtureId);
+  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => b - a);
+  if (!seqs.length) return null;
+  const sample = [...new Set(Array.from({ length: 10 }, (_, k) => Math.floor((seqs.length - 1) * (k / 9))))].map((i) => seqs[i]);
+  for (const s of sample) {
+    const b = await txline().statValidation(fixtureId, s, statKey);
+    if (b && Number(b.summary.updateStats.minTimestamp) / 1000 >= afterSecs) return b;
+  }
+  return null;
+}
+
 /** Refund a market whose predicate never came true. Only legal once `expiry + grace` has passed. */
 export async function voidMarket(program: any, market: string): Promise<SettleResult> {
   const kp = loadServerKeypair();
@@ -126,7 +182,7 @@ export async function voidMarket(program: any, market: string): Promise<SettleRe
   const m: any = await program.account.market.fetch(marketPk);
   if (m.status !== 0) return { settled: false, reason: "not open" };
   const now = Math.floor(Date.now() / 1000);
-  if (now < Number(m.expiryTs) + VOID_GRACE_SECS) return { settled: false, reason: "not expired" };
+  if (now < Number(m.expiryTs) + RESOLVE_GRACE_SECS) return { settled: false, reason: "not expired" };
   try {
     const sig = await program.methods.void().accounts({ cranker: kp.publicKey, market: marketPk }).rpc();
     return { settled: true, sig, outcome: "VOID" };

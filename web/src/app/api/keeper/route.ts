@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk } from "@/lib/serverConfig";
 import { listMarkets, listParlays } from "@/lib/kernel";
-import { serverProgram, settleMarket, voidMarket, settleParlay, VOID_GRACE_SECS } from "@/lib/settleEngine";
+import { serverProgram, settleMarket, settleMarketNo, voidMarket, settleParlay, RESOLVE_GRACE_SECS } from "@/lib/settleEngine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,17 +69,25 @@ async function run(req: NextRequest) {
     const openMarkets = markets.filter((m: any) => m.status === 0);
     for (const m of openMarkets) {
       try {
+        // The ladder, in the order the chain allows it.
+        //  1. Did it happen?  -> settle, YES takes the pot.
+        //  2. Is it over, and provably didn't happen? -> settle_no, NO takes the pot.
+        //  3. Neither provable after an hour? -> void, everybody is repaid.
+        // Step 2 is the one that makes the pool two-sided. Before it existed, a NO backer could only
+        // lose or break even, and the app was quoting them a payout the kernel could not deliver.
         const r = await settleMarket(program, m.pubkey);
-        if (r.settled) { settled.push({ market: m.pubkey, sig: r.sig, provenValue: r.provenValue }); continue; }
+        if (r.settled) { settled.push({ market: m.pubkey, sig: r.sig, provenValue: r.provenValue, outcome: r.outcome }); continue; }
 
-        // The predicate never held. Past expiry + grace, the honest move is a refund, not a stalemate.
-        if (now >= Number(m.expiryTs) + VOID_GRACE_SECS) {
+        const n = await settleMarketNo(program, m.pubkey);
+        if (n.settled) { settled.push({ market: m.pubkey, sig: n.sig, provenValue: n.provenValue, outcome: n.outcome }); continue; }
+
+        if (now >= Number(m.expiryTs) + RESOLVE_GRACE_SECS) {
           const v = await voidMarket(program, m.pubkey);
           if (v.settled) { voided.push({ market: m.pubkey, sig: v.sig }); continue; }
           skipped.push({ market: m.pubkey, reason: v.reason });
           continue;
         }
-        skipped.push({ market: m.pubkey, reason: r.reason });
+        skipped.push({ market: m.pubkey, reason: r.reason, no: n.reason });
       } catch (e: any) {
         skipped.push({ market: m.pubkey, reason: (e?.message || String(e)).slice(0, 90) });
       }

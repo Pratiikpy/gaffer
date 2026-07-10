@@ -44,6 +44,9 @@ pub const STATUS_OPEN: u8 = 0;
 pub const STATUS_SETTLED_YES: u8 = 1;
 pub const STATUS_VOID: u8 = 2;
 pub const STATUS_PARLAY_NO: u8 = 3; // parlay busted by expiry → NO side wins
+/// Market resolved AGAINST the predicate: proven not to have happened, so the NO side takes the pot.
+/// Shares the discriminant with `STATUS_PARLAY_NO` — different account type, same meaning: "NO won".
+pub const STATUS_SETTLED_NO: u8 = 3;
 pub const MAX_LEGS: usize = 8;
 pub const COMPARISON_GREATER_THAN: u8 = 0;
 /// Grace window (seconds) after `expiry_ts` before a market can be voided / a parlay resolved to
@@ -53,6 +56,15 @@ pub const COMPARISON_GREATER_THAN: u8 = 0;
 /// NOTE: `expiry_ts` is a UNIX wall-clock time in SECONDS (matches Clock::get().unix_timestamp);
 /// the proof seed `ts` is in MILLISECONDS, so settle compares `ts / 1000 <= expiry_ts`.
 pub const VOID_GRACE_SECS: i64 = 120;
+
+/// How long the keeper gets to prove an outcome — either way — before anyone may void the pool.
+///
+/// `void` refunds both sides. Once `settle_no` exists, an early void is a *griefing vector*: the losing
+/// YES side could wait out `VOID_GRACE_SECS`, void the market, and claw its stake back from NO backers
+/// who had rightfully won. So voiding is now the last resort it was always meant to be — reachable only
+/// after an hour in which nobody could prove the stat either above or below its threshold. A healthy
+/// keeper settles within seconds of the oracle anchoring, and settlement always beats a void.
+pub const RESOLVE_GRACE_SECS: i64 = 3600;
 
 /// Commercial floor (the revenue switch, provably bounded). The protocol may take a parimutuel rake
 /// from WINNINGS only (never a void refund), read from the singleton `Config` PDA at claim time. It is
@@ -337,6 +349,75 @@ pub mod latch {
         Ok(())
     }
 
+    /// Settle a market AGAINST its predicate: the thing was proven not to have happened, and NO takes
+    /// the pot.
+    ///
+    /// Without this, a market has exactly two endings — YES wins, or everyone is refunded — and backing
+    /// NO is strictly dominated: you lose your stake if the goal comes and you get it back if it doesn't.
+    /// You can never profit. The pool was only ever one-sided, and every "back NO to win X" the app
+    /// showed was a number it could not pay. That is the bug this closes.
+    ///
+    /// The asymmetry was never in the data, only in the kernel. `validate_stat` proves any comparison it
+    /// is handed, so "it never happened" is as provable as "it did":
+    ///
+    ///     value(t) <= threshold   <=>   value(t) < threshold + 1        (Comparison::LessThan)
+    ///
+    /// with one binding that matters more than the arithmetic: **the snapshot must be taken after the
+    /// market closed**. A proof that Spain had not scored by minute three is true and worthless. So `ts`
+    /// must sit at or past `expiry_ts`, and the wall clock must be past `expiry_ts + VOID_GRACE_SECS` —
+    /// the same head start `void` gives the keeper to land a rightful YES first, so the NO side cannot
+    /// grief a winner by racing to settle the instant the window shuts.
+    ///
+    /// Nobody on NO? Then there is no rightful winner, and the pot is refunded rather than trapped —
+    /// exactly as `settle` does when nobody is on YES.
+    pub fn settle_no(
+        ctx: Context<SettleNo>,
+        ts: i64,
+        fixture_summary: ScoresBatchSummary,
+        fixture_proof: Vec<ProofNode>,
+        main_tree_proof: Vec<ProofNode>,
+        stat_a: StatTerm,
+    ) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        {
+            let m = &ctx.accounts.market;
+            require!(m.status == STATUS_OPEN, KernelError::NotOpen);
+            require_keys_eq!(ctx.accounts.txoracle_program.key(), TXORACLE_ID, KernelError::BadOracleProgram);
+            require!(ctx.accounts.daily_scores_merkle_roots.to_account_info().owner == &TXORACLE_ID, KernelError::BadOracleProgram);
+            require!(fixture_summary.fixture_id == m.fixture_id, KernelError::FixtureMismatch);
+            require!(stat_a.stat_to_prove.key == m.stat_key, KernelError::StatMismatch);
+            // Only over-threshold markets exist (v1), so "NO" is unambiguously `value <= threshold`.
+            require!(m.comparison == COMPARISON_GREATER_THAN, KernelError::BadComparison);
+            // The proof must describe the world AFTER the market shut. `ts` is milliseconds; expiry is seconds.
+            require!(ts / 1000 >= m.expiry_ts, KernelError::SnapshotTooEarly);
+            // And a rightful YES gets the first chance to land.
+            let resolve_at = m.expiry_ts.checked_add(VOID_GRACE_SECS).ok_or(KernelError::Overflow)?;
+            require!(now >= resolve_at, KernelError::NotExpired);
+        }
+
+        // value(t) <= threshold  <=>  value(t) < threshold + 1
+        let predicate = TraderPredicate {
+            threshold: ctx.accounts.market.threshold.checked_add(1).ok_or(KernelError::Overflow)?,
+            comparison: Comparison::LessThan,
+        };
+        let txo = ctx.accounts.txoracle_program.to_account_info();
+        let dsr = ctx.accounts.daily_scores_merkle_roots.to_account_info();
+        let never_happened = prove_stat(&txo, &dsr, ts, fixture_summary, fixture_proof, main_tree_proof, predicate, stat_a, None, None)?;
+        require!(never_happened, KernelError::PredicateNotMet);
+
+        let m = &mut ctx.accounts.market;
+        if m.no_total == 0 {
+            // Proven false, but nobody backed NO: no rightful winner, so refund rather than trap the pot.
+            m.status = STATUS_VOID;
+            emit!(MarketVoided { market: m.key(), market_id: m.market_id });
+        } else {
+            m.status = STATUS_SETTLED_NO;
+            m.settle_ts = ts;
+            emit!(MarketSettled { market: m.key(), market_id: m.market_id, winning_side: SIDE_NO, ts });
+        }
+        Ok(())
+    }
+
     /* ───────────────────────── K2 · the two-timestamp delta-proof market ─────────────────────────
      *
      * The Frozen Window asks a question the absolute-threshold market cannot: "does anyone score in the
@@ -479,11 +560,19 @@ pub mod latch {
     /// Void an unsettled market once it is past expiry + grace, enabling refunds. The grace window
     /// gives the keeper time to settle a within-window YES first, so a NO staker cannot void a
     /// rightful YES the instant expiry passes.
+    /// The last resort: nobody could prove the stat either way, so nobody wins and everybody is repaid.
+    ///
+    /// This used to be reachable two minutes after expiry, which was harmless while a market's only
+    /// endings were "YES wins" or "refund". Now that `settle_no` can pay the NO side, an early void is a
+    /// way for the losing YES side to claw its stake back out of a pot NO had rightfully won. So voiding
+    /// waits an hour: long enough that a healthy keeper — which settles within seconds of the oracle
+    /// anchoring — will always have resolved the market first, and short enough that money is never
+    /// trapped when the oracle genuinely has nothing to say.
     pub fn void(ctx: Context<Void>) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
         let m = &mut ctx.accounts.market;
         require!(m.status == STATUS_OPEN, KernelError::NotOpen);
-        let void_at = m.expiry_ts.checked_add(VOID_GRACE_SECS).ok_or(KernelError::Overflow)?;
+        let void_at = m.expiry_ts.checked_add(RESOLVE_GRACE_SECS).ok_or(KernelError::Overflow)?;
         require!(now >= void_at, KernelError::NotExpired);
         m.status = STATUS_VOID;
         emit!(MarketVoided { market: m.key(), market_id: m.market_id });
@@ -502,6 +591,13 @@ pub mod latch {
                     require!(m.yes_total > 0, KernelError::Overflow);
                     let pot = (m.yes_total as u128).checked_add(m.no_total as u128).ok_or(KernelError::Overflow)?;
                     ((pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (m.yes_total as u128)) as u64, true)
+                }
+                STATUS_SETTLED_NO => {
+                    // The mirror of the YES branch: the pot is split pro-rata across the NO side.
+                    require!(pos.side == SIDE_NO, KernelError::NotWinner);
+                    require!(m.no_total > 0, KernelError::Overflow);
+                    let pot = (m.yes_total as u128).checked_add(m.no_total as u128).ok_or(KernelError::Overflow)?;
+                    ((pot.checked_mul(pos.amount as u128).ok_or(KernelError::Overflow)? / (m.no_total as u128)) as u64, true)
                 }
                 STATUS_VOID => (pos.amount, false), // refund original stake (either side) — never raked
                 _ => return err!(KernelError::NotResolved),
@@ -741,6 +837,17 @@ pub struct Settle<'info> {
     pub market: Account<'info, Market>,
     /// CHECK: txoracle's daily_scores_roots PDA; owner-pinned to TXORACLE_ID in the handler, then
     /// passed through to validate_stat (read-only there).
+    pub daily_scores_merkle_roots: UncheckedAccount<'info>,
+    /// CHECK: must be the txoracle program; enforced against TXORACLE_ID.
+    pub txoracle_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct SettleNo<'info> {
+    pub settler: Signer<'info>, // permissionless, exactly like `settle`
+    #[account(mut, seeds = [b"market", market.market_id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    /// CHECK: txoracle's daily_scores_roots PDA; owner-pinned in the handler, then read by validate_stat.
     pub daily_scores_merkle_roots: UncheckedAccount<'info>,
     /// CHECK: must be the txoracle program; enforced against TXORACLE_ID.
     pub txoracle_program: UncheckedAccount<'info>,
@@ -1031,6 +1138,7 @@ pub enum KernelError {
     #[msg("validate_stat returned no verdict")] NoVerdict,
     #[msg("Predicate not met — not settleable yet")] PredicateNotMet,
     #[msg("Market not yet expired")] NotExpired,
+    #[msg("The proof predates the market's close")] SnapshotTooEarly,
     #[msg("Already claimed")] AlreadyClaimed,
     #[msg("Caller is not on the winning side")] NotWinner,
     #[msg("Market not resolved")] NotResolved,
@@ -1127,5 +1235,84 @@ mod tests {
         // The fee never exceeds the gross, even at the hard ceiling on a large pot.
         let (net, fee) = rake_split(MAX_RAKE_BPS, u64::MAX / 2, true).unwrap();
         assert!(fee <= u64::MAX / 2 && net + fee == u64::MAX / 2);
+    }
+
+    /* ── settle_no · the side that could never win ─────────────────────────────────────────────── */
+
+    /// The pro-rata split, as `claim` computes it for each winning side.
+    fn share(pot: u128, mine: u64, side_total: u64) -> u64 {
+        ((pot * mine as u128) / side_total as u128) as u64
+    }
+
+    #[test]
+    fn no_side_takes_the_whole_pot_when_the_predicate_is_proven_false() {
+        // The exact shape of a seeded pool: 0.02 on YES, 0.06 on NO.
+        let (yes, no) = (20_000_000u64, 60_000_000u64);
+        let pot = (yes + no) as u128;
+        // Nobody scored: NO wins, and a lone NO backer takes everything, including the YES stake.
+        assert_eq!(share(pot, no, no), yes + no);
+        // Two NO backers split it in proportion to their stakes. Pro-rata truncates, so the pot may
+        // retain at most one lamport of dust per winner beyond the first — the same rounding the YES
+        // side has always had. It is never over-paid, which is the property that matters.
+        let paid = share(pot, 20_000_000, no) + share(pot, 40_000_000, no);
+        assert!(paid <= yes + no, "the vault can never pay out more than the pot");
+        assert!((yes + no) - paid <= 1, "and the dust left behind is at most a lamport");
+    }
+
+    #[test]
+    fn the_two_sides_are_now_symmetric() {
+        let (yes, no) = (30_000_000u64, 50_000_000u64);
+        let pot = (yes + no) as u128;
+        // Whichever side is proven, that side splits the same pot the same way.
+        assert_eq!(share(pot, yes, yes), yes + no);
+        assert_eq!(share(pot, no, no), yes + no);
+    }
+
+    #[test]
+    fn backing_no_can_now_profit_where_before_it_could_only_break_even() {
+        let (yes, no) = (60_000_000u64, 20_000_000u64);
+        let pot = (yes + no) as u128;
+        let stake = no;                       // a lone NO backer
+        let before = stake;                   // old kernel: VOID -> refund, exactly the stake
+        let after = share(pot, stake, no);    // new kernel: SETTLED_NO -> the pot
+        assert_eq!(before, 20_000_000);
+        assert_eq!(after, 80_000_000);
+        assert!(after > before, "NO must be able to win, not merely be repaid");
+    }
+
+    #[test]
+    fn no_is_proven_by_the_strict_less_than_of_threshold_plus_one() {
+        // The kernel asks validate_stat for `value < threshold + 1`, which is exactly `value <= threshold`.
+        let holds = |value: i32, threshold: i32| value < threshold + 1;
+        // "Belgium to score" (threshold 0), final 0 goals -> NO is true.
+        assert!(holds(0, 0));
+        // ...and one goal makes it false, so settle_no cannot steal a market YES already won.
+        assert!(!holds(1, 0));
+        // "3+ goals" (threshold 2): two goals still means NO.
+        assert!(holds(2, 2));
+        assert!(!holds(3, 2));
+    }
+
+    #[test]
+    fn a_void_can_no_longer_grief_a_rightful_no_winner() {
+        let expiry = 1_000_000i64;
+        // settle_no opens at expiry + VOID_GRACE_SECS; void only at expiry + RESOLVE_GRACE_SECS.
+        let settle_no_at = expiry + VOID_GRACE_SECS;
+        let void_at = expiry + RESOLVE_GRACE_SECS;
+        assert!(settle_no_at < void_at, "the keeper must be able to resolve before anyone may void");
+        // The old kernel voided at the same instant NO became provable — a free claw-back for the loser.
+        assert_eq!(settle_no_at, expiry + 120);
+        assert_eq!(void_at, expiry + 3600);
+    }
+
+    #[test]
+    fn a_snapshot_from_before_the_close_cannot_settle_no() {
+        // `ts` is milliseconds, `expiry_ts` is seconds. "Spain hadn't scored by minute 3" is true and
+        // worthless; only a snapshot at or after the close may resolve the market against the predicate.
+        let expiry_secs = 1_800_000i64;
+        let too_early_ms = (expiry_secs - 1) * 1000;
+        let ok_ms = expiry_secs * 1000;
+        assert!(too_early_ms / 1000 < expiry_secs);
+        assert!(ok_ms / 1000 >= expiry_secs);
     }
 }

@@ -94,6 +94,15 @@ const DEV = process.env.NEXT_PUBLIC_GAFFER_DEV === "1"; // dev/demo controls (sp
 const POLL = typeof window === "undefined" || new URLSearchParams(window.location.search).get("nopoll") == null;
 
 // Parimutuel projection: if your side wins, payout = potAfter × yourStake / sideAfter.
+/** Which side a market paid, or 0 if nobody did.
+ *
+ * 1 = SETTLED_YES, 3 = SETTLED_NO, 2 = VOID (both sides refunded). Status 3 is the ending that could not
+ * exist before `settle_no`: the thing was proven not to have happened, and the fans who said so take the
+ * pot. Anything that used to test `status === 1 && side === 1` was quietly assuming NO could never win. */
+const wonSide = (m: MarketView): 0 | 1 | 2 => (m.status === 1 ? 1 : m.status === 3 ? 2 : 0);
+/** Did the pool pay out at all (as opposed to refunding)? */
+const isPaid = (m: MarketView) => wonSide(m) !== 0;
+
 function projection(m: MarketView, side: number, stakeSol: number) {
   const yes = Number(m.yesTotal) / 1e9, no = Number(m.noTotal) / 1e9;
   const sideNow = side === 1 ? yes : no;
@@ -315,7 +324,7 @@ export default function GafferApp() {
   useEffect(() => {
     const collectable = positions.filter((p: any) => {
       const m = markets.find((x: MarketView) => x.pubkey === p.market);
-      return m && !p.claimed && p.amount > 0 && ((m.status === 1 && p.side === 1) || m.status === 2);
+      return m && !p.claimed && p.amount > 0 && ((isPaid(m) && p.side === wonSide(m)) || m.status === 2);
     }).length;
     setBadge(collectable);
   }, [positions, markets]);
@@ -498,23 +507,26 @@ export default function GafferApp() {
   const claim = async (m: MarketView) => {
     if (!kernel) return; setBusy("claim:" + m.pubkey);
     try {
-      // Side-aware: figure out which of the user's positions are actually claimable for this
-      // market's resolution. SETTLED_YES → only a YES position wins; VOID → either side refunds.
+      // Side-aware: figure out which of the user's positions are actually claimable for this market's
+      // resolution. SETTLED_YES → only YES wins; SETTLED_NO → only NO wins; VOID → either side refunds.
       const [posYes, posNo] = await Promise.all([kernel.myPosition(m.pubkey, 1), kernel.myPosition(m.pubkey, 2)]);
+      const win = wonSide(m);   // 0 = void, both refund
       const targets: number[] = [];
-      if (m.status === 1) { if (posYes && !posYes.claimed) targets.push(1); }
+      if (win === 1) { if (posYes && !posYes.claimed) targets.push(1); }
+      else if (win === 2) { if (posNo && !posNo.claimed) targets.push(2); }
       else if (m.status === 2) { if (posYes && !posYes.claimed) targets.push(1); if (posNo && !posNo.claimed) targets.push(2); }
-      if (targets.length === 0) { flash(m.status === 1 ? "That side didn't win" : "Nothing to claim here", "err"); setBusy(null); return; }
+      if (targets.length === 0) { flash(win ? "That side didn't win" : "Nothing to claim here", "err"); setBusy(null); return; }
       const pot = (Number(m.yesTotal) + Number(m.noTotal)) / 1e9;
-      const yes = Number(m.yesTotal) / 1e9 || 1;
+      // The pot is split across the side that won — whichever it was.
+      const winTotal = (win === 2 ? Number(m.noTotal) : Number(m.yesTotal)) / 1e9 || 1;
       let lastSig = "", total = 0;
       for (const side of targets) {
         const pos = side === 1 ? posYes : posNo;
         lastSig = await kernel.claim(m.pubkey, side);
-        total += m.status === 1 ? pot * ((pos?.amount || 0) / yes) : (pos?.amount || 0);
+        total += win ? pot * ((pos?.amount || 0) / winTotal) : (pos?.amount || 0);
       }
-      if (m.status === 1) {
-        const staked = (posYes?.amount || 0);
+      if (win) {
+        const staked = ((win === 2 ? posNo : posYes)?.amount || 0);
         const calledAt = Number(localStorage.getItem("gaffer_calledat_" + m.pubkey)) || null;
         const receipt = { amount: total, q: label(m).q, sig: lastSig, when: new Date().toLocaleString(), calledAt, staked, mult: staked > 0 ? total / staked : null, market: m.pubkey };
         keepReceipt(receipt);
@@ -698,10 +710,10 @@ export default function GafferApp() {
         const live = positions
           .filter((p) => !p.claimed && p.amount > 0)
           .map((p) => ({ p, m: markets.find((x) => x.pubkey === p.market) }))
-          .filter((x): x is { p: any; m: MarketView } => !!x.m && (x.m.status === 0 || (x.m.status === 1 && x.p.side === 1)));
+          .filter((x): x is { p: any; m: MarketView } => !!x.m && (x.m.status === 0 || (isPaid(x.m) && x.p.side === wonSide(x.m))));
         if (live.length === 0 || tab === "cash") return null;
-        const first = live.find((x) => x.m.status === 1) || live[0];
-        const won = first.m.status === 1;
+        const first = live.find((x) => isPaid(x.m)) || live[0];
+        const won = isPaid(first.m);
         return (
           <button onClick={() => setTab("cash")} className={`gf-ticker fixed bottom-[72px] left-1/2 -translate-x-1/2 z-20 w-full max-w-[440px] px-5`}>
             <span className={`flex items-center gap-2 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg border ${won ? "bg-[var(--green)] text-white border-[var(--green)]" : "bg-[var(--ink)] text-white border-[var(--ink)]"}`}>
@@ -1570,8 +1582,11 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, setSheet, set
   const onFixture = (m: MarketView) => !selectedFixture || Number(m.fixtureId) === selectedFixture;
   const open = markets.filter((m: MarketView) => m.status === 0 && Number(m.lockTs) > nowSec && realMarket(m) && onFixture(m));
   // "Ready to collect" shows only settled pools YOU were in and can still collect.
-  const held = (mkt: string) => positions.some((p: any) => p.market === mkt && !p.claimed && p.amount > 0 && p.side === 1);
-  const settled = markets.filter((m: MarketView) => m.status === 1 && realMarket(m) && held(m.pubkey));
+  // You can collect when the side you backed is the side that won. SETTLED_YES pays YES (1);
+  // SETTLED_NO pays NO (2) — the ending that could not exist before `settle_no`.
+  const heldWinning = (m: MarketView) => positions.some((p: any) =>
+    p.market === m.pubkey && !p.claimed && p.amount > 0 && p.side === wonSide(m));
+  const settled = markets.filter((m: MarketView) => isPaid(m) && realMarket(m) && heldWinning(m));
   const sel = fixtures.find((f: any) => f.fixtureId === selectedFixture);
   const selName = FIXTURE_NAMES[String(selectedFixture)] ? `${FIXTURE_NAMES[String(selectedFixture)].home} v ${FIXTURE_NAMES[String(selectedFixture)].away}` : "the match";
   return (
@@ -1694,9 +1709,9 @@ function LiveNow({ fixtureId, markets, positions, onOpen }: { fixtureId: number;
   const mine = positions
     .filter((p: any) => !p.claimed && p.amount > 0)
     .map((p: any) => ({ p, m: markets.find((x) => x.pubkey === p.market) }))
-    .filter((x): x is { p: any; m: MarketView } => !!x.m && Number(x.m.fixtureId) === fixtureId && (x.m.status === 0 || (x.m.status === 1 && x.p.side === 1)));
-  const first = mine.find((x: any) => x.m.status === 1) || mine[0];
-  const won = first?.m.status === 1;
+    .filter((x): x is { p: any; m: MarketView } => !!x.m && Number(x.m.fixtureId) === fixtureId && (x.m.status === 0 || (isPaid(x.m) && x.p.side === wonSide(x.m))));
+  const first = mine.find((x: any) => isPaid(x.m)) || mine[0];
+  const won = first ? isPaid(first.m) : false;
   const toWin = first ? heldPayout(first.m, first.p.side, first.p.amount) : 0;
 
   return (
@@ -1771,7 +1786,7 @@ function Card({ m, label, children, onOpen }: any) {
       <button onClick={onOpen} className="w-full text-left">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 mono text-[10px] uppercase tracking-wide text-[#9CA3AF]"><FlagPair home={l.f.home} away={l.f.away} size={13} />{l.match}</span>
-          <span className={`mono text-[10px] ${m.status === 1 ? "text-[var(--green)]" : "text-[var(--muted)]"}`}>{m.statusLabel} · <TickNum value={potL / 1e9} /></span>
+          <span className={`mono text-[10px] ${isPaid(m) ? "text-[var(--green)]" : "text-[var(--muted)]"}`}>{m.statusLabel} · <TickNum value={potL / 1e9} /></span>
         </div>
         <div className="text-[17px] font-bold tracking-tight mt-1">{l.q}?</div>
         {/* the room's belief — Polymarket's price-as-probability, in fan language */}
@@ -2722,7 +2737,7 @@ function LiveCallTracker({ positions, markets, fixtureId, pulse }: { positions: 
   if (!mine.length) return null;
 
   const stage = (m: MarketView) => {
-    if (m.status === 1) return { label: "PAID", tone: "bg-[var(--green)] text-white" };
+    if (isPaid(m)) return { label: "PAID", tone: "bg-[var(--green)] text-white" };
     if (m.status === 2) return { label: "REFUNDED", tone: "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]" };
     if (pulse?.running || pulse?.atHalftime) return { label: "COOKING", tone: "bg-[#D8A32B] text-white" };
     return { label: "PROJECTED", tone: "bg-[#FAFAF7] text-[var(--muted)] border border-[var(--line)]" };
@@ -3018,8 +3033,8 @@ function FrozenWindow({ round, userId, onCall, onDismiss, onPinLore }: any) {
 function CallRow({ m, p, busy, claim, collect, onOpen }: any) {
   const l = label(m);
   const b = busy === "collect:" + m.pubkey || busy === "claim:" + m.pubkey;
-  const won = m.status === 1 && p.side === 1;
-  const lost = m.status === 1 && p.side === 2;
+  const won = isPaid(m) && p.side === wonSide(m);
+  const lost = isPaid(m) && p.side !== wonSide(m);
   const refund = m.status === 2;
   const open = m.status === 0;
   const chip = won ? { t: "WON", c: "text-[var(--green)]" } : lost ? { t: "DIDN'T LAND", c: "text-[#9CA3AF]" } : refund ? { t: "CALLED OFF", c: "text-[#9CA3AF]" } : { t: "IN PLAY", c: "text-[var(--ink)]" };
@@ -3048,7 +3063,7 @@ function Cash({ bal, fund, busy, markets, claim, collect, setDetail, positions =
     .filter((p: any) => p.amount > 0 && !p.claimed)
     .map((p: any) => ({ p, m: markets.find((x: MarketView) => x.pubkey === p.market) }))
     .filter((x: any) => x.m && realMarket(x.m));   // never surface a pool we can't truthfully name
-  const rank = (x: any) => (x.m.status === 1 && x.p.side === 1 ? 0 : x.m.status === 2 ? 1 : x.m.status === 0 ? 2 : 3);
+  const rank = (x: any) => (isPaid(x.m) && x.p.side === wonSide(x.m) ? 0 : x.m.status === 2 ? 1 : x.m.status === 0 ? 2 : 3);
   mine.sort((a: any, b: any) => rank(a) - rank(b));
   return (
     <div>

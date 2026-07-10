@@ -473,6 +473,19 @@ export default function GafferApp() {
     finally { setBusy(null); }
   };
 
+  /** The net rippled.
+   *
+   * A goal is the only thing that happens in football, and it is the moment every other app makes you go
+   * looking for. Here it announces itself: the chime, the buzz, the scoreline, and — because a goal is
+   * also the instant a pool becomes settleable — an immediate re-read of the pools rather than waiting
+   * out the next poll. Muted when the fan has asked for quiet (spoiler-safe watch-along mode). */
+  const onGoal = useCallback((msg: string) => {
+    if (SPOILER_SAFE) return;
+    flash(msg);
+    try { playPaid(); hapticPaid(); } catch { /* no audio/haptics on this device */ }
+    void refresh();
+  }, [refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const doStake = async () => {
     if (!sheet) return;
     if (!ageOkRef.current) { gateAge(() => { void doStake(); }); return; }
@@ -697,7 +710,7 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} onGoal={onGoal} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={setSelectedFixture} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} joinTribe={joinTribe} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
@@ -1569,7 +1582,7 @@ function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () =
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, askMarket, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
+function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -1592,7 +1605,7 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, setSheet, set
   return (
     <div>
       <MatchBar fixtures={fixtures} selected={selectedFixture} onSelect={onSelectFixture} />
-      <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} />
+      <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} onGoal={onGoal} />
       <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
         <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full" style={{ background: "radial-gradient(circle, rgba(5,150,105,.5), transparent 70%)" }} />
         <div className="relative">
@@ -1689,17 +1702,46 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, setSheet, set
  * *what's the score* and *how am I doing*. The score is read off the same signed feed everything else
  * settles on. When the feed hasn't reported a scoreline we render nothing rather than a fabricated 0–0.
  */
-function LiveNow({ fixtureId, markets, positions, onOpen }: { fixtureId: number; markets: MarketView[]; positions: any[]; onOpen: (m: MarketView) => void }) {
+function LiveNow({ fixtureId, markets, positions, onOpen, onGoal }: { fixtureId: number; markets: MarketView[]; positions: any[]; onOpen: (m: MarketView) => void; onGoal?: (msg: string) => void }) {
   const [pulse, setPulse] = useState<any>(null);
+  const score = useRef<{ h: number; a: number } | null>(null);
+
+  /** Poll at the speed of the match.
+   *
+   * A fixed fifteen seconds is fine for a fixture list and far too slow for a goal: with the server's
+   * four-second cache on top, a fan could stare at a stale scoreline for nearly twenty seconds after the
+   * net rippled. While the clock runs we look every four seconds; when nothing is happening we back off
+   * and stop asking the feed questions it has already answered. */
   useEffect(() => {
     if (!fixtureId) return;
     let alive = true;
-    const read = () => livePulse(fixtureId).then((p) => { if (alive) setPulse(p); }).catch(() => {});
+    let timer: ReturnType<typeof setTimeout>;
+    score.current = null;   // a new match starts with no scoreline to compare against
+
+    const read = async () => {
+      try {
+        const p = await livePulse(fixtureId);
+        if (!alive || !p) return;
+        setPulse(p);
+
+        // The instant the scoreline moves, say so — this is the beat the whole app exists for.
+        if (typeof p.homeGoals === "number" && typeof p.awayGoals === "number") {
+          const prev = score.current;
+          const f = fx(fixtureId);
+          if (prev && (p.homeGoals > prev.h || p.awayGoals > prev.a)) {
+            const who = p.homeGoals > prev.h ? f.home : f.away;
+            onGoal?.(`GOAL — ${who}. ${f.home} ${p.homeGoals}–${p.awayGoals} ${f.away}`);
+          }
+          score.current = { h: p.homeGoals, a: p.awayGoals };
+        }
+        if (POLL && alive) timer = setTimeout(read, p.running ? 4000 : p.finished ? 60000 : 20000);
+      } catch {
+        if (POLL && alive) timer = setTimeout(read, 20000);
+      }
+    };
     read();
-    if (!POLL) return () => { alive = false; };
-    const t = setInterval(read, 15000);
-    return () => { alive = false; clearInterval(t); };
-  }, [fixtureId]);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [fixtureId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!pulse || pulse.homeGoals == null) return null;
   const f = fx(fixtureId);

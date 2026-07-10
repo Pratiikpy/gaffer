@@ -15,8 +15,9 @@
  * The log is the evidence: unattended operation is a claim, and claims need receipts.
  *
  *   BASE=https://gaffer-cyan.vercel.app GAFFER_ADMIN_KEY=… node agents/keeper-service.mjs
- *   node agents/keeper-service.mjs --once          # a single sweep, then exit (CI / smoke test)
- *   node agents/keeper-service.mjs --interval 15   # tick every 15s (default 20)
+ *   node agents/keeper-service.mjs --once             # a single sweep, then exit (CI / smoke test)
+ *   node agents/keeper-service.mjs --interval 15      # tick every 15s (default 20)
+ *   node agents/keeper-service.mjs --fixture 18218149 # match day: watch one match, pay it in seconds
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -32,6 +33,9 @@ const arg = (name, fallback) => {
 const ONCE = process.argv.includes("--once");
 const INTERVAL_MS = Number(arg("interval", 20)) * 1000;
 const BASE = (process.env.BASE || arg("base", "http://127.0.0.1:3001")).replace(/\/$/, "");
+/** Watch one match instead of the whole chain. On match day this is the difference between paying a
+ *  goal out in seconds and sweeping every dead pool ever minted first. */
+const FIXTURE = Number(arg("fixture", process.env.FIXTURE || 0)) || 0;
 const ADMIN_KEY = process.env.GAFFER_ADMIN_KEY || "";
 
 const logFile = () => {
@@ -51,10 +55,11 @@ function record(entry) {
 async function tick() {
   const started = Date.now();
   try {
-    const res = await fetch(`${BASE}/api/keeper`, {
+    const url = FIXTURE ? `${BASE}/api/keeper?fixture=${FIXTURE}` : `${BASE}/api/keeper`;
+    const res = await fetch(url, {
       method: "POST",
       headers: ADMIN_KEY ? { "x-gaffer-key": ADMIN_KEY } : {},
-      signal: AbortSignal.timeout(55_000),
+      signal: AbortSignal.timeout(110_000),
     });
     if (res.status === 401) {
       console.error("keeper: unauthorized — set GAFFER_ADMIN_KEY to the value configured on the server");
@@ -79,9 +84,9 @@ async function tick() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-console.log(`keeper → ${BASE} every ${INTERVAL_MS / 1000}s${ADMIN_KEY ? "" : "  (no admin key: dev-open servers only)"}`);
+console.log(`keeper → ${BASE}${FIXTURE ? ` · fixture ${FIXTURE}` : " · all fixtures"} every ${INTERVAL_MS / 1000}s${ADMIN_KEY ? "" : "  (no admin key: dev-open servers only)"}`);
 console.log(`log    → ${logFile()}`);
-record({ event: "start", base: BASE, intervalMs: INTERVAL_MS, once: ONCE });
+record({ event: "start", base: BASE, fixture: FIXTURE || null, intervalMs: INTERVAL_MS, once: ONCE });
 
 let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"]) {

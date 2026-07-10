@@ -41,10 +41,20 @@ async function run(req: NextRequest) {
   if (!adminOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const startedAt = Date.now();
 
+  // Optional `?fixture=` — sweep one match instead of the whole chain.
+  //
+  // A full sweep walks every open pool ever minted, including dead ones whose feed has aged out and
+  // answers 403 on every tick. That is fine for the nightly cron and far too slow during a match: the
+  // promise is that a goal pays before the replay finishes, not a minute later. On match day the keeper
+  // watches the match.
+  const only = Number(req.nextUrl.searchParams.get("fixture")) || 0;
+
   try {
     const program = serverProgram();
     const now = Math.floor(Date.now() / 1000);
-    const [markets, parlays] = await Promise.all([listMarkets(), listParlays()]);
+    const [allMarkets, allParlays] = await Promise.all([listMarkets(), listParlays()]);
+    const markets = only ? allMarkets.filter((m: any) => Number(m.fixtureId) === only) : allMarkets;
+    const parlays = only ? allParlays.filter((p: any) => Number(p.fixtureId) === only) : allParlays;
 
     const settled: any[] = [], voided: any[] = [], slips: any[] = [], skipped: any[] = [];
 
@@ -88,6 +98,7 @@ async function run(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       ms: Date.now() - startedAt,
+      fixture: only || null,
       swept: { markets: openMarkets.length, parlays: parlays.filter((x: any) => x.status === 0).length },
       settled, voided, slips, skipped,
     });

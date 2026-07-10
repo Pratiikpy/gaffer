@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { liveState, HT_BEAT_MS } from "@/lib/live";
+import { liveState, emptyLiveState, HT_BEAT_MS } from "@/lib/live";
 import { oddsSilenceMs, SILENCE_MS } from "@/lib/rounds";
 import { tokenOk, todayPick, switchTodayPick } from "@/lib/points";
 import { useMove } from "@/lib/economy";
@@ -20,7 +20,12 @@ export async function GET(req: NextRequest) {
   const squad = req.nextUrl.searchParams.get("squad") || null;
   if (!fixture) return NextResponse.json({ error: "no fixture" }, { status: 400 });
 
-  const [state, silentMs] = await Promise.all([liveState(fixture), oddsSilenceMs(fixture).catch(() => 0)]);
+  // A dead feed must not take the page down: with no cached scoreline to fall back on, report the
+  // fixture as unknown and let the UI render nothing. It never renders a fabricated 0–0.
+  const [state, silentMs] = await Promise.all([
+    liveState(fixture).catch(() => emptyLiveState(fixture)),
+    oddsSilenceMs(fixture).catch(() => 0),
+  ]);
   const pick = user ? await todayPick(user).catch(() => null) : null;
 
   // L7 — one halftime push per squad per fixture, a minute into the break, and only to people who
@@ -63,7 +68,8 @@ export async function POST(req: NextRequest) {
 
     const fixture = Number(b.fixtureId) || 0;
     const side = b.side === "no" ? "no" : "yes";
-    const state = await liveState(fixture);
+    const state = await liveState(fixture).catch(() => null);
+    if (!state) return NextResponse.json({ ok: false, reason: "Can't read the match right now — try again in a moment." }, { status: 503 });
     if (!state.atHalftime) return NextResponse.json({ ok: false, reason: "The move is only open at halftime." }, { status: 400 });
 
     const pick = await todayPick(userId);

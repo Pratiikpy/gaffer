@@ -30,16 +30,30 @@ export type LiveState = {
   awayGoals: number | null;
 };
 
+/** A fixture we know nothing about. Distinct from a fixture whose feed call FAILED — see below. */
+export const emptyLiveState = (fixtureId: number): LiveState =>
+  ({ fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false, homeGoals: null, awayGoals: null });
+
 /** Read the live state of a fixture. Single-flighted: a squad polling together must cost ONE feed call,
  * not one per phone. A stale-but-recent state beats an error while the feed catches its breath. */
 export async function liveState(fixtureId: number): Promise<LiveState> {
   return cached(`live:${fixtureId}`, { ttlMs: 4_000, swrMs: 30_000, staleMs: 60_000 }, () => readLiveState(fixtureId));
 }
 
+/** Throws when the feed call fails. That distinction is the whole point.
+ *
+ * This used to swallow the error and hand back an empty state — which `cached()` then stored as though
+ * it were data, for up to thirty seconds. So one cold start or one blip and the scoreline silently blanked
+ * out, exactly when a fan is watching a match. `cache.ts` promises never to cache an error; converting an
+ * error into a plausible-looking value here is how that promise got broken.
+ *
+ * Throwing lets the cache do its job: serve the last good scoreline through a hiccup, and only surface
+ * failure when there is nothing good left to serve. An empty state is now returned for one reason only —
+ * the feed answered, and it has nothing on this fixture yet.
+ */
 async function readLiveState(fixtureId: number): Promise<LiveState> {
-  const empty: LiveState = { fixtureId, finished: false, clockSeconds: null, running: false, atHalftime: false, secondHalf: false, homeGoals: null, awayGoals: null };
-  let v = empty;
-  try {
+  let v = emptyLiveState(fixtureId);
+  {
     const events: any[] = await txline().historicalEvents(fixtureId);
     if (events.length) {
       const bySeq = [...events].sort((a, b) => Number(a.Seq ?? a.seq ?? 0) - Number(b.Seq ?? b.seq ?? 0));
@@ -64,6 +78,6 @@ async function readLiveState(fixtureId: number): Promise<LiveState> {
 
       v = { fixtureId, finished, clockSeconds, running, atHalftime, secondHalf, homeGoals, awayGoals };
     }
-  } catch { /* feed hiccup — an unknown state is "not at halftime", never a fabricated one */ }
+  }
   return v;
 }

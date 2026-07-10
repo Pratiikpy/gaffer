@@ -5,6 +5,8 @@ import assert from "node:assert";
 
 let n = 0, pass = 0;
 const t = (name, fn) => { n++; try { fn(); pass++; console.log("  ✓", name); } catch (e) { console.log("  ✗", name, "—", e.message); } };
+/** Async-aware. The sync runner above would let a rejected promise slip through as a pass. */
+const ta = async (name, fn) => { n++; try { await fn(); pass++; console.log("  ✓", name); } catch (e) { console.log("  ✗", name, "—", e.message); } };
 
 /* ── L2 · odds-silence bookkeeping (mirror of rounds.ts computeSilence) ── */
 function computeSilence(prev, id, now) {
@@ -57,6 +59,60 @@ t("stopped at 20:00 (an injury break) is not halftime", () => assert.strictEqual
 t("stopped at 90:00 (full time) is not halftime", () => assert.strictEqual(halftime({ finished: false, running: false, clockSeconds: 5400 }), false));
 t("unknown clock is never halftime", () => assert.strictEqual(halftime({ finished: false, running: false, clockSeconds: null }), false));
 t("past the band is second half", () => { assert.strictEqual(secondHalf(3001), true); assert.strictEqual(secondHalf(2999), false); });
+
+/* ── The scoreline must survive a feed blip ──
+ * readLiveState() throws on a failed feed call so cached() can serve the last good value. It used to
+ * swallow the error and return an empty state, which the cache then stored AS DATA for up to thirty
+ * seconds — blanking the score mid-match. A feed that answers with nothing is a different thing, and
+ * must still render as unknown rather than as 0–0. */
+const scoreOf = (s) => (s.homeGoals == null ? "unknown" : `${s.homeGoals}-${s.awayGoals}`);
+const EMPTY = { homeGoals: null, awayGoals: null };
+const LIVE_2_0 = { homeGoals: 2, awayGoals: 0 };
+
+/** A miniature of cache.ts: store on success, serve last-good on throw, rethrow once too stale. */
+function makeLiveCache(readFn) {
+  let entry;
+  return async function liveState(now, staleMs = 60_000) {
+    try {
+      const value = await readFn();
+      entry = { at: now, value };
+      return value;
+    } catch (e) {
+      if (entry && now - entry.at < staleMs) return entry.value;
+      throw e;
+    }
+  };
+}
+
+console.log("scoreline resilience:");
+{
+  let mode = "ok";
+  const read = async () => {
+    if (mode === "throw") throw new Error("feed down");
+    return mode === "empty" ? EMPTY : LIVE_2_0;
+  };
+  const liveState = makeLiveCache(read);
+
+  await ta("a healthy feed shows the score", async () => assert.strictEqual(scoreOf(await liveState(0)), "2-0"));
+
+  mode = "throw";
+  await ta("a feed blip keeps the last good score on screen, never a blank", async () =>
+    assert.strictEqual(scoreOf(await liveState(5_000)), "2-0"));
+
+  await ta("an outage past staleMs surfaces the failure rather than inventing a state", async () => {
+    let threw = false;
+    try { await liveState(90_000); } catch { threw = true; }
+    assert.strictEqual(threw, true);
+  });
+
+  mode = "empty";
+  await ta("a fixture the feed knows nothing about renders as unknown, never 0-0", async () =>
+    assert.strictEqual(scoreOf(await liveState(100_000)), "unknown"));
+
+  mode = "ok";
+  await ta("and it recovers the moment the feed returns", async () =>
+    assert.strictEqual(scoreOf(await liveState(101_000)), "2-0"));
+}
 
 console.log(`\n${pass}/${n} passed`);
 process.exit(pass === n ? 0 : 1);

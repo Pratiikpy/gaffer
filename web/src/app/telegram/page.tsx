@@ -86,7 +86,7 @@ function Splash({ line, children }: { line: string; children?: React.ReactNode }
   return (
     <div className="min-h-dvh flex flex-col items-center justify-center px-8 text-center">
       <div className="text-2xl font-black tracking-tight">gaffer.</div>
-      <div className="mono text-[10px] tracking-widest uppercase text-[var(--muted)] mt-1">World Cup</div>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--muted)] mt-1">The Tournament</div>
       <p className="mt-5 text-sm text-[var(--muted)]">{line}</p>
       {children}
     </div>

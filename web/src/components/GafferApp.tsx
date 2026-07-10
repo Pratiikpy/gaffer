@@ -707,7 +707,7 @@ export default function GafferApp() {
       <header className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Logo />
-          <div><div className="text-[19px] font-extrabold tracking-tight leading-none">gaffer.</div><div className="mono text-[9px] tracking-widest uppercase text-[var(--muted)] mt-0.5">World Cup</div></div>
+          <div><div className="text-[19px] font-extrabold tracking-tight leading-none">gaffer.</div><div className="mono text-[9px] tracking-widest uppercase text-[var(--muted)] mt-0.5">The Tournament</div></div>
         </div>
         <button onClick={() => setTab("you")} className="flex items-center gap-2 bg-[var(--ink)] text-white rounded-full pl-2 pr-3 py-1.5">
           <span className="w-2 h-2 rounded-full bg-[var(--greenb)] gf-pulse" /><span className="text-[15px] font-bold">{streak}</span>

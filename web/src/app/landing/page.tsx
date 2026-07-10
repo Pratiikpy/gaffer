@@ -23,7 +23,7 @@ export default function Landing() {
       <div className="max-w-[440px] mx-auto px-6 py-10">
         <div className="flex items-center gap-2">
           <span className="text-2xl font-extrabold tracking-tight">gaffer.</span>
-          <span className="mono text-[9px] tracking-widest uppercase text-[var(--muted)]">World Cup</span>
+          <span className="mono text-[9px] tracking-widest uppercase text-[var(--muted)]">The Tournament</span>
         </div>
 
         {/* Hero */}

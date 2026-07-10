@@ -4,7 +4,7 @@ import type { MetadataRoute } from "next";
  * Icons are rendered on demand by /api/icon so there are no binary blobs to keep in the repo. */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "GAFFER — World Cup",
+    name: "GAFFER — The Tournament",
     short_name: "GAFFER",
     description: "Call it, get paid the second it happens. The World Cup game you already play in the group chat.",
     start_url: "/",

@@ -745,9 +745,17 @@ export default function GafferApp() {
         );
       })()}
 
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[440px] bg-white/90 backdrop-blur border-t border-[var(--line)] px-4 py-3 pb-6 flex justify-around">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[440px] bg-white/90 backdrop-blur border-t border-[var(--line)] px-4 pt-2 pb-5 flex justify-around">
         {([["today", "Today"], ["squad", "Squad"], ["live", "Live"], ["cash", "Cash"], ["you", "You"]] as const).map(([k, t]) => (
-          <button key={k} onClick={() => setTab(k)} className={`mono text-[10px] tracking-wide font-semibold ${tab === k ? "text-[var(--ink)]" : "text-[#9CA3AF]"}`}>{t}</button>
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            aria-label={t}
+            aria-current={tab === k ? "page" : undefined}
+            className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg active:scale-95 transition-transform ${tab === k ? "text-[var(--ink)]" : "text-[#9CA3AF]"}`}>
+            <TabIcon kind={k} active={tab === k} />
+            <span className="mono text-[9px] tracking-wide font-semibold">{t}</span>
+          </button>
         ))}
       </nav>
 
@@ -981,6 +989,26 @@ function OnbMark({ kind }: { kind: "call" | "paid" | "freeze" }) {
  *
  * Every step here is skippable. A wall in the first minute is the most expensive thing an app can build.
  */
+/** The onboarding chrome, hoisted out of `Onboarding`.
+ *
+ * Declaring a component inside another component gives React a brand-new component *type* on every
+ * render, so the whole subtree unmounts and remounts each time: state is lost, transitions restart, and
+ * a button can vanish from under a tap. Playwright kept reporting "element was detached from the DOM"
+ * on the skip button, which is exactly what that looks like from the outside — and what a fan's thumb
+ * would hit on a slow phone.
+ */
+function OnboardShell({ children }: { children: React.ReactNode }) {
+  return <div className="fixed inset-0 z-[55] bg-[var(--ink)] text-white flex flex-col items-center justify-center px-8 text-center">{children}</div>;
+}
+function OnboardNext({ label, onClick, onSkip }: { label: string; onClick: () => void; onSkip: () => void }) {
+  return (
+    <>
+      <button className="mt-8 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold" onClick={onClick}>{label}</button>
+      <button className="mt-3 mono text-[11px] text-white/40" onClick={onSkip}>skip</button>
+    </>
+  );
+}
+
 function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation, onSaveName, onAskPush, onShare }: {
   onDone: () => void;
   onFreePick?: (side: "yes" | "no") => void;
@@ -998,7 +1026,7 @@ function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation,
 
   // 0–10s: you are already in the match, and your mates are already in it.
   if (step === 0) return (
-    <Shell>
+    <OnboardShell>
       <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{invited ? "Your squad is in" : "On right now"}</div>
       <div className="text-3xl font-extrabold tracking-tight mt-2">{matchLabel || "The match is on."}</div>
       {invited ? (
@@ -1013,13 +1041,13 @@ function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation,
       ) : (
         <p className="text-[16px] text-white/75 mt-3 leading-relaxed max-w-xs">Call what happens next. Everyone who&apos;s right splits the pot. No bookie, no house.</p>
       )}
-      <Next label="What&apos;s your call?" onClick={() => setStep(1)} onSkip={onDone} />
-    </Shell>
+      <OnboardNext label="What&apos;s your call?" onClick={() => setStep(1)} onSkip={onDone} />
+    </OnboardShell>
   );
 
   // 10–25s: the free call, before any identity ask at all.
   if (step === 1) return (
-    <Shell>
+    <OnboardShell>
       <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">Free · no sign-up</div>
       <div className="text-3xl font-extrabold tracking-tight mt-2">Goal before half-time?</div>
       <p className="text-[14px] text-white/60 mt-2">{matchLabel}</p>
@@ -1028,12 +1056,12 @@ function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation,
         <button onClick={() => { onFreePick?.("no"); setStep(2); }} className="flex-1 py-4 rounded-2xl bg-white/15 text-white text-lg font-bold">No</button>
       </div>
       <button className="mt-6 mono text-[11px] text-white/40" onClick={onDone}>skip</button>
-    </Shell>
+    </OnboardShell>
   );
 
   // 25–35s: identity, framed as saving what you already did. With a way out.
   if (step === 2) return (
-    <Shell>
+    <OnboardShell>
       <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">Your call is in</div>
       <div className="text-3xl font-extrabold tracking-tight mt-2">Save it under a name.</div>
       <p className="text-[14px] text-white/60 mt-2 max-w-xs">So your squad knows who called it, and your record follows you.</p>
@@ -1042,44 +1070,33 @@ function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation,
       <button disabled={!name.trim()} onClick={() => { onSaveName?.(name.trim()); setStep(3); }}
         className="mt-4 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold disabled:opacity-30">Save my call</button>
       <button className="mt-3 mono text-[11px] text-white/40" onClick={() => setStep(3)}>later</button>
-    </Shell>
+    </OnboardShell>
   );
 
   // 35–45s: the un-voidable sentence — a promise about something you now hold.
   if (step === 3) return (
-    <Shell>
+    <OnboardShell>
       <div className="mx-auto"><OnbMark kind="paid" /></div>
       <div className="text-3xl font-extrabold tracking-tight mt-5">When you win, the pool pays you.</div>
       <p className="text-[16px] text-white/75 mt-3 leading-relaxed max-w-xs">
         No one can void it, limit you, or hold your payout. Every win comes with a receipt you can check.
       </p>
-      <Next label="Good" onClick={() => setStep(4)} onSkip={onDone} />
-    </Shell>
+      <OnboardNext label="Good" onClick={() => setStep(4)} onSkip={onDone} />
+    </OnboardShell>
   );
 
   // 45–60s: the soft push ask, after the value. Then the share back to the chat.
   return (
-    <Shell>
+    <OnboardShell>
       <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">One last thing</div>
       <div className="text-3xl font-extrabold tracking-tight mt-2">Want a nudge when it lands?</div>
       <p className="text-[14px] text-white/60 mt-2 max-w-xs">We&apos;ll ping you when your call settles, and when the Freeze opens. Nothing else, ever.</p>
       <button onClick={async () => { await onAskPush?.(); onDone(); }} className="mt-6 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold">Yes, ping me</button>
       <button onClick={() => { onShare?.(); onDone(); }} className="mt-2 w-full max-w-xs py-3.5 rounded-2xl bg-white/15 text-white font-bold">Share it to the chat</button>
       <button className="mt-3 mono text-[11px] text-white/40" onClick={onDone}>not now</button>
-    </Shell>
+    </OnboardShell>
   );
 
-  function Shell({ children }: { children: React.ReactNode }) {
-    return <div className="fixed inset-0 z-[55] bg-[var(--ink)] text-white flex flex-col items-center justify-center px-8 text-center">{children}</div>;
-  }
-  function Next({ label, onClick, onSkip }: { label: string; onClick: () => void; onSkip: () => void }) {
-    return (
-      <>
-        <button className="mt-8 w-full max-w-xs py-3.5 rounded-2xl bg-white text-[var(--ink)] text-lg font-bold" onClick={onClick}>{label}</button>
-        <button className="mt-3 mono text-[11px] text-white/40" onClick={onSkip}>skip</button>
-      </>
-    );
-  }
 }
 
 /** The Wake (N1) — elimination-night ritual. Detects, from real results, whether the fan's nation lost
@@ -1282,12 +1299,19 @@ function QuestBoard({ econ }: { econ: Economy | null }) {
         </span>
       </div>
       <div className="mt-3 space-y-2">
-        {(quests.length ? quests : [{ id: "l", label: "Loading your goals…", done: false }]).map((q) => (
-          <div key={q.id} className="flex items-center gap-2.5">
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${q.done ? "bg-[var(--green)] text-white" : "border-2 border-[var(--line)] text-transparent"}`}>✓</span>
-            <span className={`text-sm ${q.done ? "text-[var(--muted)] line-through" : "font-semibold"}`}>{q.label}</span>
-          </div>
-        ))}
+        {quests.length
+          ? quests.map((q) => (
+            <div key={q.id} className="flex items-center gap-2.5">
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${q.done ? "bg-[var(--green)] text-white" : "border-2 border-[var(--line)] text-transparent"}`}>✓</span>
+              <span className={`text-sm ${q.done ? "text-[var(--muted)] line-through" : "font-semibold"}`}>{q.label}</span>
+            </div>
+          ))
+          : [0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-2.5">
+              <Skeleton className="w-5 h-5 rounded-full shrink-0" />
+              <Skeleton className={`h-3.5 ${i === 0 ? "w-40" : i === 1 ? "w-44" : "w-36"}`} />
+            </div>
+          ))}
       </div>
       {done < total ? (
         <div className="mt-3 h-1.5 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full bg-[var(--green)] transition-all duration-500" style={{ width: `${(done / Math.max(1, total)) * 100}%` }} /></div>
@@ -1664,7 +1688,18 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
       <AskCard onAsk={askMarket} busy={busy === "ask"} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />
 
       <Section title={`Open pools · ${selName}`} />
-      {loading && open.length === 0 && <div className="text-sm text-[var(--muted)] py-6 text-center">Loading today&apos;s pools…</div>}
+      {loading && open.length === 0 && (
+        <div aria-label="Loading pools">
+          {[0, 1].map((i) => (
+            <div key={i} className="bg-white border border-[var(--line)] rounded-2xl p-4 mb-2.5">
+              <div className="flex items-center justify-between"><Skeleton className="h-2.5 w-40" /><Skeleton className="h-2.5 w-12" /></div>
+              <Skeleton className="h-5 w-52 mt-2.5" />
+              <Skeleton className="h-1.5 w-full mt-3 rounded-full" />
+              <div className="flex gap-2 mt-3"><Skeleton className="h-11 flex-1 rounded-xl" /><Skeleton className="h-11 flex-1 rounded-xl" /></div>
+            </div>
+          ))}
+        </div>
+      )}
       {!loading && open.length === 0 && <div className="text-sm text-[var(--muted)] py-6 text-center">{sel?.state === "soon" || sel?.state === "upcoming" ? "Pools open at kick-off — lock your free call above." : "No pools open on this match yet."}</div>}
       {open.map((m: MarketView) => (
         <Card key={m.pubkey} m={m} label={label} onOpen={() => setDetail(m)}>
@@ -1896,6 +1931,31 @@ function Card({ m, label, children, onOpen }: any) {
       </button>
       {children}
     </div>
+  );
+}
+
+/** A shape where the content will be. "Loading your goals…" tells a fan nothing except that they are
+ *  waiting; a row of three greyed rows tells them three goals are on the way. */
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`gf-skeleton ${className}`} aria-hidden />;
+}
+
+/** The bottom bar's icons.
+ *
+ * Drawn, never emoji (§ no-emoji-as-UI). Stroked so they inherit the active/inactive colour from the
+ * button, and given a title for anyone navigating by screen reader. A mobile-first app whose primary
+ * navigation is five words of 10px monospace is asking a thumb to read.
+ */
+function TabIcon({ kind, active }: { kind: "today" | "squad" | "live" | "cash" | "you"; active: boolean }) {
+  const p = { fill: "none", stroke: "currentColor", strokeWidth: active ? 2.1 : 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  return (
+    <svg width="21" height="21" viewBox="0 0 24 24" aria-hidden focusable="false">
+      {kind === "today" && (<><rect x="3" y="5" width="18" height="16" rx="3" {...p} /><path d="M8 3v4M16 3v4M3 10h18" {...p} /></>)}
+      {kind === "squad" && (<><circle cx="9" cy="9" r="3.2" {...p} /><path d="M3.5 19a5.7 5.7 0 0 1 11 0" {...p} /><path d="M16 7.2a3 3 0 0 1 0 5.6M17.5 19a5.6 5.6 0 0 0-2-4.1" {...p} /></>)}
+      {kind === "live" && (<><circle cx="12" cy="12" r="8.4" {...p} /><path d="M12 3.6v16.8M3.6 12h16.8" {...p} opacity={active ? 0.55 : 0.4} /></>)}
+      {kind === "cash" && (<><rect x="2.6" y="6" width="18.8" height="12" rx="3" {...p} /><circle cx="12" cy="12" r="2.6" {...p} /></>)}
+      {kind === "you" && (<><circle cx="12" cy="8.2" r="3.6" {...p} /><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" {...p} /></>)}
+    </svg>
   );
 }
 

@@ -34,10 +34,14 @@ body {
 @keyframes gfRing { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.6); opacity: 0 } }
 @keyframes gfPop { 0% { transform: scale(.7); opacity: 0 } 60% { transform: scale(1.06) } 100% { transform: scale(1); opacity: 1 } }
 @keyframes gfPulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
+/* Skeletons: a shape where the content will be, breathing gently. A sentence saying "Loading…" tells a
+   fan nothing except that they are waiting; a shape tells them what is coming. */
+@keyframes gfShimmer { 0%, 100% { opacity: .55 } 50% { opacity: .28 } }
 @keyframes gfRoll { from { transform: translateY(40%); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
 .gf-ring { animation: gfRing 2.2s ease-out infinite; }
 .gf-pop { animation: gfPop .45s cubic-bezier(.2,.9,.3,1) both; }
 .gf-pulse { animation: gfPulse 1.3s infinite; }
+.gf-skeleton { background: var(--line); border-radius: .5rem; animation: gfShimmer 1.4s ease-in-out infinite; }
 .gf-roll { animation: gfRoll .5s cubic-bezier(.2,.9,.3,1) both; }
 /* live money ticks — a number that just moved flashes its direction (trading-tape feel) */
 @keyframes gfTickUp { 0% { color: #059669; transform: translateY(-14%) } 100% { color: inherit; transform: none } }
@@ -47,4 +51,4 @@ body {
 /* the pinned live-call ticker slides up from the nav */
 @keyframes gfTicker { from { transform: translateY(100%); opacity: 0 } to { transform: none; opacity: 1 } }
 .gf-ticker { animation: gfTicker .35s cubic-bezier(.2,.9,.3,1) both; }
-@media (prefers-reduced-motion: reduce) { .gf-ring, .gf-pop, .gf-pulse, .gf-roll, .gf-tick-up, .gf-tick-down, .gf-ticker { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .gf-ring, .gf-pop, .gf-pulse, .gf-roll, .gf-tick-up, .gf-tick-down, .gf-ticker, .gf-skeleton { animation: none; } }

@@ -1602,10 +1602,30 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
   const settled = markets.filter((m: MarketView) => isPaid(m) && realMarket(m) && heldWinning(m));
   const sel = fixtures.find((f: any) => f.fixtureId === selectedFixture);
   const selName = FIXTURE_NAMES[String(selectedFixture)] ? `${FIXTURE_NAMES[String(selectedFixture)].home} v ${FIXTURE_NAMES[String(selectedFixture)].away}` : "the match";
+
+  /* Matchday.
+   *
+   * Today is a day lobby: a free call, three quests, a knockout board, a sealed booster. All of it is
+   * beside the point at minute 34 of a match you are watching. When the clock is running, the match comes
+   * first — the score, your position, the pools you can still call — and the lobby waits below. */
+  const [pulse, setPulse] = useState<any>(null);
+  const matchOn = !!pulse && (pulse.running || pulse.atHalftime);
+
+  const lobby = (
+    <>
+      <QuestBoard econ={econ} />
+      <RecapCard />
+      <RolloverPot econ={econ} />
+      <KnockoutEntry econ={econ} onEnter={onEnterKnockouts} busy={econBusy} name={userName} />
+      <MysterySlot econ={econ} onPlay={onPlayMystery} busy={econBusy} />
+    </>
+  );
+
   return (
     <div>
       <MatchBar fixtures={fixtures} selected={selectedFixture} onSelect={onSelectFixture} />
-      <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} onGoal={onGoal} />
+      <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} onGoal={onGoal} onPulse={setPulse} />
+{!matchOn && (<>
       <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
         <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full" style={{ background: "radial-gradient(circle, rgba(5,150,105,.5), transparent 70%)" }} />
         <div className="relative">
@@ -1626,12 +1646,9 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
           <p className="text-[12px] text-[#9CA3AF] mt-2">Free. No sign-up. Keep your run — play for real when you&apos;re ready.</p>
         </div>
       </div>
+</>)}
 
-      <QuestBoard econ={econ} />
-      <RecapCard />
-      <RolloverPot econ={econ} />
-      <KnockoutEntry econ={econ} onEnter={onEnterKnockouts} busy={econBusy} name={userName} />
-      <MysterySlot econ={econ} onPlay={onPlayMystery} busy={econBusy} />
+      {!matchOn && lobby}
       {selectedFixture && <MarketRead fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
       {selectedFixture && <DramaMeter fixtureId={selectedFixture} />}
       {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} onRelive={onRelive} /> : null; })()}
@@ -1677,6 +1694,34 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
       ))}
       </>); })()}
 
+      {/* On matchday the lobby waits its turn — the match had the top of the screen. */}
+      {matchOn && (
+        <>
+          <Section title="While you watch" />
+      <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
+        <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full" style={{ background: "radial-gradient(circle, rgba(5,150,105,.5), transparent 70%)" }} />
+        <div className="relative">
+          <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">Today&apos;s free call</div>
+          <p className="text-[19px] font-bold tracking-tight mt-3">Goal before half-time? <span className="text-[#9CA3AF] font-normal inline-flex items-center gap-1.5">{FIXTURE_NAMES[String(selectedFixture)] && <FlagPair home={FIXTURE_NAMES[String(selectedFixture)].home} away={FIXTURE_NAMES[String(selectedFixture)].away} size={14} />}{selName}</span></p>
+          {!freePicked ? (
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => freePick("yes")} className="flex-1 h-12 rounded-xl bg-white text-[var(--ink)] font-bold">Yes</button>
+              <button onClick={() => freePick("no")} className="flex-1 h-12 rounded-xl bg-[#1d1d1f] border border-[#2c2c2e] font-bold">No</button>
+            </div>
+          ) : (
+            <div className="flex items-end gap-3 mt-4"><div className="text-5xl font-extrabold leading-none">{streak}</div><div className="pb-1 text-[15px] font-bold leading-tight">day streak<br /><span className="text-[var(--greenb)]">still alive</span></div></div>
+          )}
+          <div className="flex items-center gap-1.5 mt-3">
+            {Array.from({ length: 3 }).map((_, i) => (<RunTile key={i} kind={i < freezes ? "freeze" : "miss"} size={13} onDark />))}
+            <span className="mono text-[10px] text-[#9CA3AF] ml-1">{freezes} freeze{freezes === 1 ? "" : "s"} · miss a day, keep your run</span>
+          </div>
+          <p className="text-[12px] text-[#9CA3AF] mt-2">Free. No sign-up. Keep your run — play for real when you&apos;re ready.</p>
+        </div>
+      </div>
+          {lobby}
+        </>
+      )}
+
       <HiLo userId={userId} onPoints={onHiloPoints} />
 
       {settled.length > 0 && <Section title="Ready to collect" />}
@@ -1702,7 +1747,7 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
  * *what's the score* and *how am I doing*. The score is read off the same signed feed everything else
  * settles on. When the feed hasn't reported a scoreline we render nothing rather than a fabricated 0–0.
  */
-function LiveNow({ fixtureId, markets, positions, onOpen, onGoal }: { fixtureId: number; markets: MarketView[]; positions: any[]; onOpen: (m: MarketView) => void; onGoal?: (msg: string) => void }) {
+function LiveNow({ fixtureId, markets, positions, onOpen, onGoal, onPulse }: { fixtureId: number; markets: MarketView[]; positions: any[]; onOpen: (m: MarketView) => void; onGoal?: (msg: string) => void; onPulse?: (p: any) => void }) {
   const [pulse, setPulse] = useState<any>(null);
   const score = useRef<{ h: number; a: number } | null>(null);
 
@@ -1723,6 +1768,7 @@ function LiveNow({ fixtureId, markets, positions, onOpen, onGoal }: { fixtureId:
         const p = await livePulse(fixtureId);
         if (!alive || !p) return;
         setPulse(p);
+        onPulse?.(p);
 
         // The instant the scoreline moves, say so — this is the beat the whole app exists for.
         if (typeof p.homeGoals === "number" && typeof p.awayGoals === "number") {

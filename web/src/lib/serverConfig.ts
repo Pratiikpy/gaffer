@@ -14,8 +14,22 @@ export const SERVER_KEYPAIR = process.env.GAFFER_KEYPAIR || "../.devnet-key.json
 
 /** Shared secret guarding admin/keeper routes (create-market, settle*). */
 export const ADMIN_KEY = process.env.GAFFER_ADMIN_KEY || "";
-/** Explicit dev opt-in to run admin/keeper routes WITHOUT a key. Off by default ⇒ routes fail CLOSED. */
-export const ALLOW_OPEN_ADMIN = (process.env.ALLOW_OPEN_ADMIN ?? "0") === "1";
+
+/** Vercel Cron authenticates with `Authorization: Bearer $CRON_SECRET`, not our header. */
+export const CRON_SECRET = process.env.CRON_SECRET || "";
+
+/** Explicit dev opt-in to run admin/keeper routes WITHOUT a key.
+ *
+ * Honoured ONLY outside production. This is deliberate belt-and-braces: the admin routes make the server
+ * keypair sign transactions, and that one wallet is the market authority, the keeper's settler, the
+ * faucet, AND the on-chain TxLINE subscriber whose signature mints our API token. Left open, an anonymous
+ * `POST /api/create-market` costs it ~0.0026 SOL a call — a few thousand curls and the pools stop
+ * settling, the faucet dries up and the data feed dies with it. That is exactly what shipped: the flag
+ * was set in production with no key beside it. A single wrong env var must never be able to do that
+ * again, so production ignores the flag outright rather than trusting it to be unset.
+ */
+export const ALLOW_OPEN_ADMIN =
+  (process.env.ALLOW_OPEN_ADMIN ?? "0") === "1" && process.env.NODE_ENV !== "production";
 
 /** Faucet hard cap (lamports) — the amount is server-controlled; callers cannot request more. */
 export const FAUCET_MAX_LAMPORTS = Math.round(Number(process.env.FAUCET_MAX_SOL || "0.1") * 1e9);
@@ -38,11 +52,27 @@ export function loadServerKeypair(): Keypair {
   return _kp;
 }
 
-/** Admin/keeper route guard. FAIL-CLOSED: with no ADMIN_KEY configured the call is rejected
- * unless ALLOW_OPEN_ADMIN=1 is explicitly set (devnet dev). Otherwise a constant-time header match. */
+/** Constant-time compare that never leaks length through `timingSafeEqual`'s own throw. */
+function secretEq(got: string, want: string): boolean {
+  if (!want) return false;
+  const a = Buffer.from(got), b = Buffer.from(want);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/** Admin/keeper route guard. FAIL-CLOSED.
+ *
+ * Accepts either our own `x-gaffer-key` header or Vercel Cron's `Authorization: Bearer $CRON_SECRET`,
+ * so the scheduled settler authenticates without a second shared secret rattling around. With neither
+ * configured, the call is rejected unless a developer explicitly opted in via ALLOW_OPEN_ADMIN — which
+ * production ignores (see above).
+ */
 export function adminOk(req: Request): boolean {
-  if (!ADMIN_KEY) return ALLOW_OPEN_ADMIN; // no key: only open if the dev opted in explicitly
-  const got = req.headers.get("x-gaffer-key") || "";
-  const a = Buffer.from(got), b = Buffer.from(ADMIN_KEY);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (ADMIN_KEY && secretEq(req.headers.get("x-gaffer-key") || "", ADMIN_KEY)) return true;
+  if (CRON_SECRET) {
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (secretEq(bearer, CRON_SECRET)) return true;
+  }
+  if (ADMIN_KEY || CRON_SECRET) return false; // a secret exists ⇒ it is the only way in
+  return ALLOW_OPEN_ADMIN;                    // nothing configured ⇒ dev-only opt-in, never in prod
 }

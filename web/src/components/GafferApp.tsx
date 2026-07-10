@@ -716,7 +716,7 @@ export default function GafferApp() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-5 pb-28">
-        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} loading={loading} spinUp={spinUp} askMarket={askMarket} onGoal={onGoal} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={(f: number) => { fixtureChosen.current = true; setSelectedFixture(f); }} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
+        {tab === "today" && <Today {...shared} econ={econ} onEnterKnockouts={onEnterKnockouts} onPlayMystery={onPlayMystery} econBusy={econBusy} userName={userName} onRelive={(id: number) => setMystery(id)} onAmbient={() => setAmbient(true)} loading={loading} spinUp={spinUp} askMarket={askMarket} onGoal={onGoal} streak={streak} freezes={freezes} freePicked={freePicked} freePick={freePick} addToSlip={addToSlip} parlays={parlays} positions={positions} settleParlayFn={settleParlayFn} claimParlayFn={claimParlayFn} fadeParlayFn={fadeParlayFn} fixtures={fixtures} selectedFixture={selectedFixture} onSelectFixture={(f: number) => { fixtureChosen.current = true; setSelectedFixture(f); }} userId={userId} onHiloPoints={(p: number) => setPoints(p)} onGo={setTab} />}
         {tab === "squad" && <Squad userId={userId} userName={userName} setName={setName} nation={nation} setNation={(n: string) => { setNation(n); localStorage.setItem("gaffer_nation", n); syncSquad({ nation: n }); }} squadCode={squadCode} squadData={squadData} createMySquad={createMySquad} joinByCode={joinByCode} postBanter={postBanter} reactTo={reactTo} copyCall={copyCall} leaveSquad={leaveSquad} pendingJoin={pendingJoin} flash={flash} duels={duels} squadSettings={squadSettings} lore={lore} onFade={onFade} onCommish={onCommish} joinTribe={joinTribe} />}
         {tab === "live" && <Live fixtureId={activeFixture} onFreeze={() => frozenTrigger("freeze")} onBlackout={() => frozenTrigger("blackout")} userId={userId} squadCode={squadCode} userName={userName} positions={positions} markets={markets} flash={flash} />}
         {tab === "cash" && <Cash bal={bal} fund={fund} positions={positions} econ={econ} {...shared} />}
@@ -780,7 +780,6 @@ export default function GafferApp() {
           onPoints={() => { refreshPoints(); refreshEcon(); }}
         />
       )}
-      {!ambient && !paid && tab === "today" && <button onClick={() => setAmbient(true)} className="fixed bottom-40 left-3 z-30 w-10 h-10 rounded-full bg-[var(--ink)] text-white flex items-center justify-center shadow-lg" aria-label="Ambient mode">⛶</button>}
       {paid && <PaidOverlay paid={paid} close={() => setPaid(null)} flash={flash} econ={econ} />}
       {milestone != null && (
         <MilestoneCard
@@ -1612,7 +1611,7 @@ function MilestoneCard({ days, onShare, onClose }: { days: number; onShare: () =
   );
 }
 
-function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive }: any) {
+function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSheet, settle, claim, setDetail, streak, freezes, freePicked, freePick, addToSlip, parlays, positions = [], settleParlayFn, claimParlayFn, fadeParlayFn, fixtures = [], selectedFixture, onSelectFixture, userId, onHiloPoints, onGo, econ, onEnterKnockouts, onPlayMystery, econBusy, userName, onRelive, onAmbient }: any) {
   // Only surface pools that are genuinely OPEN — status live, before the lock cut-off (KILL-1), a real
   // market, and ON THE MATCH THE FAN PICKED. `nowSec` ticks in an effect so render stays pure.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -1655,6 +1654,14 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
     <div>
       <MatchBar fixtures={fixtures} selected={selectedFixture} onSelect={onSelectFixture} />
       <LiveNow fixtureId={selectedFixture} markets={markets} positions={positions} onOpen={setDetail} onGoal={onGoal} onPulse={setPulse} />
+      {/* Ambient mode belongs beneath the match it is about, and only while there is a match to lean back
+          and watch. It used to float over the card stack as an unlabelled glyph, covering whatever pool sat
+          under it; before kickoff, with no live card above it, it reads as an orphaned bar. */}
+      {matchOn && (
+        <button onClick={() => onAmbient?.()} className="w-full mb-3 py-2.5 rounded-xl border border-[var(--line)] bg-white mono text-[10px] tracking-widest uppercase text-[var(--muted)]">
+          Ambient mode
+        </button>
+      )}
 {!matchOn && (<>
       <div className="bg-[var(--ink)] rounded-3xl p-6 text-white relative overflow-hidden">
         <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full" style={{ background: "radial-gradient(circle, rgba(5,150,105,.5), transparent 70%)" }} />

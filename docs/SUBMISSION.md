@@ -25,7 +25,9 @@ TxLINE isn't a garnish — it's the settlement substrate. Nothing pays out witho
 - **The live match.** `GET /api/scores/historical/{fixtureId}` (SSE stream) and `GET /api/scores/snapshot/{fixtureId}` feed the Match Centre timeline, the pool questions, and — critically — the **goal-count that settles the Frozen Window** and **auto-triggers** it when a goal lands live.
 - **The crowd's belief.** `GET /api/odds/snapshot/{fixtureId}?asOf=` gives the de-margined consensus 1X2 line that becomes the Frozen Window's live "sweat" strip.
 - **The proof — the whole point.** `GET /api/scores/stat-validation?fixtureId&seq&statKey` returns the Merkle-proof bundle that our on-chain kernel feeds into TxODDS's **`validate_stat`** program via CPI. `validate_stat` re-verifies that bundle against the oracle's anchored `daily_scores_roots` and returns a bool verdict. **Our program physically cannot pay the wrong side** — it never decides the outcome; it reads TxLINE's verdict. That's what makes a trustless, no-house payout possible.
-- **Auth:** `POST /auth/guest/start` → guest JWT; an on-chain `subscribe` to the TxODDS program → `POST /api/token/activate` → the API token (held server-side; it never touches the browser).
+- **Auth is Solana, not a password.** `POST /auth/guest/start` → guest JWT; an on-chain `subscribe` to the TxODDS program, **signed by our Solana keypair**; then `POST /api/token/activate` with a wallet signature over `{txSig}::{jwt}` → the API token (server-side; it never touches the browser). The subscription is a real transaction, verifiable on devnet:
+  [`2dyByvr8…`](https://explorer.solana.com/tx/2dyByvr8vLytcRbbTAxzzLoe7mdEp4s8YN9G2hJapVL3MvtBPUefhHj7otX9HaXJJXZ18n4n6tkJ4vFqVtxrGbfX?cluster=devnet) — signer `Eubd72Su…`, program `6pW64gN1…`. Note that `X-Api-Token` alone is refused; the guest JWT must ride with it (see the feedback section).
+- **Fans sign too.** A pool a fan opens is minted by *their* wallet, not ours: market `hs5G1t5Z…` carries `authority = GCGaL7pi…`, the browser wallet, which also paid its rent. The server never signs a user's market.
 
 ## Technical highlights
 

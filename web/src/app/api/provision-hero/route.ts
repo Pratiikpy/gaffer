@@ -18,6 +18,17 @@ const HERO_FIXTURE = 18172379;
 const SEED_NO = 0.06;  // seeded counter-side liquidity: the winner takes a visible profit
 const SEED_YES = 0.02;
 
+/** The server keypair must never be minted down to nothing.
+ *
+ * Every pool this route stands up costs the wallet its rent plus `SEED_YES + SEED_NO` of real liquidity,
+ * and the route is ungated by design — a fan opening a match they like should not find it empty. But that
+ * same wallet is the keeper's settler, the faucet, and the on-chain TxLINE subscriber whose signature
+ * mints our API token. Simply browsing between fixtures spent 0.17 SOL of it in one sitting.
+ *
+ * So minting has a floor. Below it, an empty match stays empty and everything that actually matters —
+ * settling pools that already hold people's money — keeps working. */
+const MIN_SERVER_SOL = 1.5;
+
 // Parimutuel settle is global — the first fan to collect closes a pool. So this route keeps pools ALIVE:
 // for the hero fixture, one open "USA to score"; for any real scheduled fixture (a live match a fan just
 // opened), the standard pair "home to score" / "away to score". Idempotent + throttled on the mint path.
@@ -26,6 +37,12 @@ function throttled(key: string, max: number): boolean {
   const now = Date.now(), w = (hits.get(key) || []).filter((t) => now - t < 60_000);
   if (w.length >= max) { hits.set(key, w); return true; }
   w.push(now); hits.set(key, w); return false;
+}
+
+/** Can the wallet afford to stand up a pool without eating into what settlement needs? */
+async function canMint(conn: Connection, kp: any): Promise<boolean> {
+  const bal = (await conn.getBalance(kp.publicKey)) / 1e9;
+  return bal - (SEED_YES + SEED_NO) >= MIN_SERVER_SOL;
 }
 
 async function mintPool(program: any, kp: any, fixtureId: number, statKey: number): Promise<string> {
@@ -60,6 +77,7 @@ export async function POST(req: NextRequest) {
       const open = openOn(askedFixture);
       if (open.length > 0) return NextResponse.json({ markets: open.map((m) => m.pubkey), created: false });
       if (throttled("mint", 6) || throttled(ip, 3)) return NextResponse.json({ error: "warming up — try again in a moment" }, { status: 429 });
+      if (!(await canMint(conn, kp))) return NextResponse.json({ markets: [], created: false, reason: "no pools on that match yet" });
       const created = [await mintPool(program, kp, askedFixture, 1), await mintPool(program, kp, askedFixture, 2)]; // home / away to score
       return NextResponse.json({ markets: created, created: true });
     }
@@ -68,6 +86,7 @@ export async function POST(req: NextRequest) {
     const hero = openOn(HERO_FIXTURE).find((m) => m.statKey === 1 && m.threshold === 0);
     if (hero) return NextResponse.json({ market: hero.pubkey, created: false });
     if (throttled("mint", 6) || throttled(ip, 3)) return NextResponse.json({ error: "warming up — try again in a moment" }, { status: 429 });
+    if (!(await canMint(conn, kp))) return NextResponse.json({ market: null, created: false, reason: "no pools open right now" });
     const market = await mintPool(program, kp, HERO_FIXTURE, 1);
     return NextResponse.json({ market, created: true });
   } catch (e: any) {

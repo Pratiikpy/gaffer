@@ -75,7 +75,9 @@ carries a message the client maps to fan copy.
 - **Proven on devnet e2e:** the TS harness in `../src/` drives the real program — `kernel-e2e.ts`
   (create → stake two wallets → settle on a real anchored proof → claim, pot drained to 0) and
   `parlay-e2e.ts` (2-leg parlay settled + claimed). `phase0.ts` gates the `validate_stat` CPI + compute.
-- **Still owed for a best-in-class repo:** a
-  scenario-numbered LiteSVM/Mollusk suite + a Trident fuzz target (no surveyed competitor ships fuzzing —
+- **Delivered:** a Mollusk harness (`scripts/settle-no-test.sh`) driving `settle_no` against the real
+  txoracle binary, its real anchored roots, and a real proof — the NO side collects the pot.
+- **Still owed for a best-in-class repo:** a broader
+  scenario-numbered Mollusk suite + a Trident fuzz target (no surveyed competitor ships fuzzing —
   a cheap differentiator), and the permissionless inactivity-invalidate (dead-resolver → anyone voids →
   refunds) from Hedgehog's parimutuel.

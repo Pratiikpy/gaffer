@@ -24,7 +24,9 @@
     "test:admin": "node scripts/test-admin.mjs",
     "test:grammar": "node scripts/test-grammar.mjs",
     "test:settle-no": "node scripts/test-settle-no.mjs",
-    "test:txline-auth": "node scripts/test-txline-auth.mjs"
+    "test:txline-auth": "node scripts/test-txline-auth.mjs",
+    "verify:stat-keys": "node scripts/verify-stat-keys.mjs",
+    "e2e:corners": "node scripts/e2e-corners.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

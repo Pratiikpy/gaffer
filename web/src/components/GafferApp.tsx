@@ -1970,7 +1970,7 @@ function Section({ title }: { title: string }) { return <div className="mono tex
  */
 function AskCard({ onAsk, busy, home, away }: { onAsk: (t: string) => Promise<boolean>; busy: boolean; home: string; away: string }) {
   const [text, setText] = useState("");
-  const examples = [`${home} to score`, `${away} to bag a hat-trick`, `${home} to score twice`];
+  const examples = [`${home} to score`, `${away} to bag a hat-trick`, `${home} to win 5+ corners`, `${away} to get booked`];
   const submit = async () => {
     const t = text.trim();
     if (!t || busy) return;
@@ -2004,7 +2004,7 @@ function AskCard({ onAsk, busy, home, away }: { onAsk: (t: string) => Promise<bo
         ))}
       </div>
       <p className="text-[11px] text-[#9CA3AF] mt-2.5 leading-snug">
-        Goals only for now — anything the match data can&apos;t prove, we won&apos;t open.
+        Goals, cards, corners — anything the match data can&apos;t prove, we won&apos;t open.
       </p>
     </div>
   );

@@ -7,6 +7,8 @@
  *
  * Mirrors src/lib/marketGrammar.ts. Run: `node scripts/test-grammar.mjs`
  */
+import { readFileSync } from "node:fs";
+
 let n = 0, pass = 0;
 const t = (name, ok, extra = "") => { n++; if (ok) { pass++; console.log("  ✓", name); } else console.log("  ✗", name, extra); };
 
@@ -15,23 +17,27 @@ const PERIOD_FULL_MATCH = 4;
 const MAX_THRESHOLD = 19;
 
 const STAT_CATALOG = [
-  { key: 1, side: "home", noun: "goals", verb: "to score", verified: true },
-  { key: 2, side: "away", noun: "goals", verb: "to score", verified: true },
-  { key: 3, side: "home", noun: "bookings", verb: "to be booked", verified: false },
-  { key: 4, side: "away", noun: "bookings", verb: "to be booked", verified: false },
-  { key: 5, side: "home", noun: "red cards", verb: "to be sent off", verified: false },
-  { key: 6, side: "away", noun: "red cards", verb: "to be sent off", verified: false },
-  { key: 7, side: "home", noun: "corners", verb: "to win a corner", verified: false },
-  { key: 8, side: "away", noun: "corners", verb: "to win a corner", verified: false },
+  { key: 1, side: "home", noun: "goals", verb: "to score", countVerb: "to score", verified: true },
+  { key: 2, side: "away", noun: "goals", verb: "to score", countVerb: "to score", verified: true },
+  { key: 3, side: "home", noun: "yellow cards", verb: "to be booked", countVerb: "to pick up", verified: true },
+  { key: 4, side: "away", noun: "yellow cards", verb: "to be booked", countVerb: "to pick up", verified: true },
+  { key: 5, side: "home", noun: "red cards", verb: "to be sent off", countVerb: "to be shown", verified: true },
+  { key: 6, side: "away", noun: "red cards", verb: "to be sent off", countVerb: "to be shown", verified: true },
+  { key: 7, side: "home", noun: "corners", verb: "to win a corner", countVerb: "to win", verified: true },
+  { key: 8, side: "away", noun: "corners", verb: "to win a corner", countVerb: "to win", verified: true },
 ];
 const statByKey = (k) => STAT_CATALOG.find((s) => s.key === k);
+
+/** An unverified stat, to exercise the refusal that guards a key we cannot stand behind. The catalog has
+ *  none today — every key the feed exposes has been reconciled — so the test supplies its own. */
+const UNVERIFIED = { key: 42, side: "home", noun: "shots on target", verb: "to shoot", countVerb: "to take", verified: false };
 
 function validatePredicate(c) {
   if (typeof c !== "object" || c === null) return { ok: false, reason: "No question I could read." };
   if (!Number.isInteger(c.statKey)) return { ok: false, reason: "I couldn't tell which stat that's about." };
-  const stat = statByKey(c.statKey);
+  const stat = c.statKey === UNVERIFIED.key ? UNVERIFIED : statByKey(c.statKey);
   if (!stat) return { ok: false, reason: "I can't settle that from the match data." };
-  if (!stat.verified) return { ok: false, reason: `I can only settle goals right now — ${stat.noun} aren't confirmed in the feed yet.` };
+  if (!stat.verified) return { ok: false, reason: `I can't settle ${stat.noun} yet — the match data doesn't confirm them.` };
   if (!Number.isInteger(c.threshold)) return { ok: false, reason: "I couldn't pin down a number for that." };
   if (c.threshold < 0) return { ok: false, reason: "That number can't be negative." };
   if (c.threshold > MAX_THRESHOLD) return { ok: false, reason: "That's beyond anything a match will produce." };
@@ -40,7 +46,7 @@ function validatePredicate(c) {
 }
 function questionFor(p, team) {
   const atLeast = p.threshold + 1;
-  return atLeast === 1 ? `${team} ${p.stat.verb}?` : `${team} to score ${atLeast}+ ${p.stat.noun}?`;
+  return atLeast === 1 ? `${team} ${p.stat.verb}?` : `${team} ${p.stat.countVerb} ${atLeast}+ ${p.stat.noun}?`;
 }
 const isAlreadyTrue = (currentValue, threshold) => currentValue > threshold;
 
@@ -77,16 +83,22 @@ console.log("what it refuses — a model cannot talk its way past this:");
   t("a missing threshold", !ok({ statKey: 1 }).ok);
 }
 
-console.log("unverified stats are refused, and say why:");
+console.log("the eight keys the feed exposes are all settleable:");
 {
-  for (const key of [3, 4, 5, 6, 7, 8]) {
-    const r = ok({ statKey: key, threshold: 0 });
-    t(`key ${key} (${statByKey(key).noun}) is refused until the feed is confirmed`, !r.ok);
+  // scripts/verify-stat-keys.mjs reconciles each of these against the feed: the `Score` block names goals
+  // and corners outright, and the card counts come from the event stream. Nothing here is presumed.
+  for (const key of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    t(`key ${key} (${statByKey(key).noun}) settles`, ok({ statKey: key, threshold: 0 }).ok);
   }
-  const corners = ok({ statKey: 7, threshold: 8 });
-  t("the refusal names the stat rather than blaming the fan", !corners.ok && corners.reason.includes("corners"));
-  t("every verified stat is a goal stat", STAT_CATALOG.filter((s) => s.verified).every((s) => s.noun === "goals"));
-  t("exactly two stats are verified today", STAT_CATALOG.filter((s) => s.verified).length === 2);
+  t("cards and corners are on the menu, not just goals",
+    STAT_CATALOG.filter((s) => s.verified).some((s) => s.noun === "corners"));
+}
+
+console.log("an unverified stat is still refused, and says why:");
+{
+  const r = ok({ statKey: UNVERIFIED.key, threshold: 2 });
+  t("a stat the feed has not confirmed cannot settle money", !r.ok);
+  t("the refusal names the stat rather than blaming the fan", !r.ok && r.reason.includes("shots on target"));
 }
 
 console.log("the question text comes from the number, never from the model's prose:");
@@ -96,6 +108,31 @@ console.log("the question text comes from the number, never from the model's pro
   t("threshold 0 reads as 'to score'", questionFor(one, "USA") === "USA to score?");
   t("threshold 2 reads as '3+ goals' (the chain proves value > 2)", questionFor(three, "Belgium") === "Belgium to score 3+ goals?");
   t("home predicates name the home team", questionFor(one, "USA").startsWith("USA"));
+
+  // A count needs its own verb: "Spain to be booked 3+ yellow cards" is not a sentence a fan would utter.
+  const booked = ok({ statKey: 3, threshold: 0 }).predicate;
+  const bookings = ok({ statKey: 3, threshold: 2 }).predicate;
+  const corner = ok({ statKey: 7, threshold: 0 }).predicate;
+  const corners = ok({ statKey: 8, threshold: 4 }).predicate;
+  const off = ok({ statKey: 6, threshold: 0 }).predicate;
+  t("one booking reads as 'to be booked'", questionFor(booked, "Spain") === "Spain to be booked?");
+  t("several read as 'to pick up 3+ yellow cards'", questionFor(bookings, "Spain") === "Spain to pick up 3+ yellow cards?");
+  t("one corner reads as 'to win a corner'", questionFor(corner, "Spain") === "Spain to win a corner?");
+  t("several read as 'to win 5+ corners'", questionFor(corners, "Belgium") === "Belgium to win 5+ corners?");
+  t("a red card reads as 'to be sent off'", questionFor(off, "Belgium") === "Belgium to be sent off?");
+}
+
+console.log("the mirror above still matches the real catalog:");
+{
+  // This file re-implements src/lib/marketGrammar.ts so it can run under bare node. That is only honest
+  // while the two agree — a flag flipped in one and not the other would test nothing.
+  const src = readFileSync(new URL("../src/lib/marketGrammar.ts", import.meta.url), "utf8");
+  for (const s of STAT_CATALOG) {
+    const line = src.match(new RegExp(`\\{ key: ${s.key},[^}]*\\}`))?.[0] ?? "";
+    t(`key ${s.key} agrees with the source`,
+      line.includes(`noun: "${s.noun}"`) && line.includes(`countVerb: "${s.countVerb}"`) && line.includes(`verified: ${s.verified}`),
+      line);
+  }
 }
 
 console.log("a pool is never minted on something that already happened:");

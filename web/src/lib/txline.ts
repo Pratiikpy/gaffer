@@ -67,12 +67,22 @@ class TxlineServer {
                ON CONFLICT (id) DO UPDATE SET token = EXCLUDED.token, minted_at = EXCLUDED.minted_at`;
   }
 
-  /** The stored token was rejected — mint a new one, once, and share it. Guarded so a burst of
-   *  concurrent 401s causes a single re-subscription rather than one per in-flight request. */
+  /** The stored token was rejected — mint a new one, once, and share it.
+   *
+   * Minting is not cheap and it is not private: it signs an on-chain `subscribe` to the TxODDS program
+   * with the server keypair. Two guards, both learned the hard way. The in-flight promise means a burst
+   * of concurrent 401s causes one re-subscription rather than one per request. And the cooldown means a
+   * feed that answers 401 to *everything* cannot turn the keeper into a subscription mint — it would
+   * empty the wallet a transaction at a time. */
   private reauth: Promise<void> | null = null;
+  private lastMintAt = 0;
+  private static readonly MINT_COOLDOWN_MS = 5 * 60_000;
+
   private async renew(): Promise<void> {
+    if (Date.now() - this.lastMintAt < TxlineServer.MINT_COOLDOWN_MS) return; // too soon; let the call fail
     if (!this.reauth) {
       this.reauth = (async () => {
+        this.lastMintAt = Date.now();
         this.apiToken = "";
         await this.authenticate();
         await this.saveToken(this.apiToken).catch(() => {});
@@ -81,14 +91,18 @@ class TxlineServer {
     await this.reauth;
   }
 
-  /** Run a feed call, and if the shared token has expired, mint a new one and try exactly once more. */
+  /** Run a feed call, and if the shared token has expired, mint a new one and try exactly once more.
+   *
+   * Only a 401 means "your token is no good". A 403 means "not this resource" — a fixture whose history
+   * has aged out of the feed answers 403 forever, and treating that as an expired token made the keeper
+   * sign a fresh on-chain `subscribe` on *every sweep of every dead pool*. Two subscriptions landed in
+   * four minutes before this was caught. Authentication is about the caller; 403 is about the thing. */
   private async withToken<T>(fn: () => Promise<T>): Promise<T> {
     await this.ensure();
     try {
       return await fn();
     } catch (e: any) {
-      const status = e?.response?.status;
-      if (status !== 401 && status !== 403) throw e;
+      if (e?.response?.status !== 401) throw e;
       await this.renew();
       return await fn();
     }

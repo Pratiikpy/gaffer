@@ -62,7 +62,23 @@ export async function noResolvable(fixtureId: number, expiryTs: number): Promise
 export async function expiryForFixture(fixtureId: number): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
   const end = await matchEndSecs(fixtureId).catch(() => null);
-  // `create_market` requires `expiry_ts > now`; a match already over cannot give us a usable one.
+
+  // A match still to finish: the pool closes when it does.
   if (end !== null && end > now + 300) return end;
-  return now + 7 * 86400;
+
+  // A match already over cannot be given a valid past expiry — `create_market` requires one in the
+  // future — so a pool on it can never prove its NO side, and nothing it says will ever come true that
+  // has not already. Such a pool exists only to be settled YES immediately or refunded. Give it a short
+  // life: the keeper settles a true predicate on its next sweep, and anything else voids an hour later
+  // and returns everyone's stake.
+  //
+  // It used to get a week. Thirteen pools accumulated on the demo match in a single afternoon of
+  // testing, unsettleable and unvoidable, cluttering the board for seven days apiece.
+  if (end !== null) return now + FINISHED_MATCH_WINDOW_SECS;
+
+  // A fixture the feed has never heard of. Long enough to be useful, short enough to expire.
+  return now + 24 * 3600;
 }
+
+/** How long a pool on an already-finished match stays open before it can be refunded. */
+export const FINISHED_MATCH_WINDOW_SECS = 15 * 60;

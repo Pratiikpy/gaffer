@@ -13,9 +13,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PROGRAM_ID = new PublicKey((idl as any).address);
-// The hero demo fixture: finished + anchored USA v Bosnia (USA won 2-0) — a pool here settles on the
+// The hero demo fixture: finished + anchored USA v Belgium (Belgium won 4-1) — a pool here settles on the
 // real proof the moment a judge collects, so the PAID moment is always reachable, live match or not.
-const HERO_FIXTURE = 18172379;
+// Overridable, because an afternoon of testing eventually fills a board with pools nobody wants.
+const HERO_FIXTURE = Number(process.env.HERO_FIXTURE || 18193785);
 const SEED_NO = 0.06;  // seeded counter-side liquidity: the winner takes a visible profit
 const SEED_YES = 0.02;
 

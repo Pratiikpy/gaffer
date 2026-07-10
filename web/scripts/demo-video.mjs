@@ -24,6 +24,8 @@ import { chromium } from "playwright";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.BASE || arg("base", "https://gaffer-cyan.vercel.app")).replace(/\/$/, "");
+/** The finished, anchored match the demo pool lives on. Must match the server's HERO_FIXTURE. */
+const HERO = Number(process.env.HERO_FIXTURE || arg("fixture", 18193785));
 const FRESH = !process.argv.includes("--keep-storage");
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const OUT = resolve(ROOT, "demo", STAMP);
@@ -68,7 +70,7 @@ const clickByText = async (page, label, exact = true) => {
 // Arrive the way a fan actually arrives: on a link a mate sent. `?pool=` selects that pool's match, so
 // the film opens on a real scoreline rather than on whichever fixture the app happened to default to.
 const findHero = async () => (await fetch(`${BASE}/api/markets`).then((r) => r.json())).markets
-  .find((m) => m.status === 0 && m.fixtureId === "18172379" && m.statKey === 1 && m.threshold === 0);
+  .find((m) => m.status === 0 && Number(m.fixtureId) === HERO && m.statKey === 1 && m.threshold === 0);
 
 /** Pick a question the compiler will actually accept.
  *
@@ -80,16 +82,16 @@ const findHero = async () => (await fetch(`${BASE}/api/markets`).then((r) => r.j
 const freeQuestion = async () => {
   const [{ markets }, live] = await Promise.all([
     fetch(`${BASE}/api/markets`).then((r) => r.json()),
-    fetch(`${BASE}/api/live?fixture=18172379`).then((r) => r.json()),
+    fetch(`${BASE}/api/live?fixture=${HERO}`).then((r) => r.json()),
   ]);
   const current = { 1: live.homeGoals ?? 0, 2: live.awayGoals ?? 0 };
-  const open = markets.filter((m) => m.status === 0 && m.fixtureId === "18172379");
+  const open = markets.filter((m) => m.status === 0 && Number(m.fixtureId) === HERO);
   const taken = (statKey, threshold) => open.some((m) => m.statKey === statKey && m.threshold === threshold);
 
   const named = [
     { statKey: 1, threshold: 2, text: "USA to bag a hat-trick" },
-    { statKey: 2, threshold: 2, text: "Bosnia to bag a hat-trick" },
-    { statKey: 2, threshold: 1, text: "Bosnia to score twice" },
+    { statKey: 2, threshold: 2, text: "Belgium to bag a hat-trick" },
+    { statKey: 2, threshold: 1, text: "Belgium to score twice" },
     { statKey: 1, threshold: 3, text: "USA to score four" },
   ];
   // Repeated takes saturate the nice questions, so fall back to plain counts. The teams' names come from
@@ -97,7 +99,7 @@ const freeQuestion = async () => {
   const fallback = [];
   for (let t = 3; t <= 9; t++) {
     fallback.push({ statKey: 1, threshold: t, text: `USA to score ${t + 1}+ goals` });
-    fallback.push({ statKey: 2, threshold: t, text: `Bosnia to score ${t + 1}+ goals` });
+    fallback.push({ statKey: 2, threshold: t, text: `Belgium to score ${t + 1}+ goals` });
   }
   for (const c of [...named, ...fallback]) {
     if (taken(c.statKey, c.threshold)) continue;
@@ -234,7 +236,7 @@ try {
   // The settler, off-camera. It is the same unattended keeper that runs through a real match; nudging it
   // here only saves the film from waiting on the nightly cron. It decides nothing — `validate_stat` does.
   if (process.env.GAFFER_ADMIN_KEY) {
-    fetch(`${BASE}/api/keeper?fixture=18172379`, { method: "POST", headers: { "x-gaffer-key": process.env.GAFFER_ADMIN_KEY } })
+    fetch(`${BASE}/api/keeper?fixture=${HERO}`, { method: "POST", headers: { "x-gaffer-key": process.env.GAFFER_ADMIN_KEY } })
       .then((r) => console.log(`  (keeper swept: ${r.status})`))
       .catch(() => {});
   }

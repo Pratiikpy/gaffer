@@ -424,8 +424,14 @@ export async function recordWinFromChain(opts: {
 
 /** C6 — the public, pseudonymous biggest-wins feed. Names only (never addresses). */
 export async function biggestWins(limit = 12) {
-  const r = await db()`SELECT name, question, stake_lamports, payout_lamports, called_at, settled_after_ms, ts
-    FROM wins ORDER BY payout_lamports DESC LIMIT ${Math.min(50, limit)}`;
+  // One row per caller: their best win. A plain ORDER BY payout DESC lets a single person who backed the
+  // same pool six times own the whole board — six identical rows, which reads as a bug rather than a
+  // leaderboard. Every number is still their own on-chain lamport delta; we just stop repeating one.
+  // `DISTINCT ON` must sort by `name` first, so the pruning happens inside and the board is ranked outside.
+  const r = await db()`SELECT * FROM (
+      SELECT DISTINCT ON (name) name, question, stake_lamports, payout_lamports, called_at, settled_after_ms, ts
+      FROM wins ORDER BY name, payout_lamports DESC, ts DESC
+    ) best ORDER BY payout_lamports DESC LIMIT ${Math.min(50, limit)}`;
   return (r as any[]).map((x) => ({
     name: x.name || "A caller",
     question: x.question || "",

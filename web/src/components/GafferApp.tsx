@@ -2979,7 +2979,12 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
   const running = latest?.Clock?.Running;
   const state: string = latest?.GameState || "";
   const clock = secs != null ? `${Math.floor(secs / 60)}'` : "";
-  const phase = state === "scheduled" ? "Kick-off soon" : running ? `Live ${clock}` : clock ? `${clock}` : "Match Centre";
+  // The eyebrow says what the match is doing; the right-hand slot carries the clock, and only the clock.
+  // Both used to fall back to the words "Match Centre", which the section header above already says —
+  // pre-match the card read "MATCH CENTRE … Match Centre" under a "Match Centre ·" title.
+  // When the feed has said nothing about this fixture we do not know whether it is hours away or long
+  // over, so the card says nothing rather than guessing.
+  const status = !latest ? "" : running ? "Live" : state === "scheduled" ? "Kick-off soon" : clock ? "Paused" : "Full time";
   const timeline = buildTimeline(recent, f.home, f.away);
   // The freshest punditworthy moment for The Gaffer's Take (goal > red > chance; corners/bookings skipped).
   const bigMoment = useMemo(() => {
@@ -3004,8 +3009,8 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
         <div className="absolute -left-10 -top-10 w-44 h-44 rounded-full opacity-[0.16]" style={{ background: `radial-gradient(circle, ${team(f.home).primary}, transparent 70%)` }} />
         <div className="absolute -right-10 -top-10 w-44 h-44 rounded-full opacity-[0.16]" style={{ background: `radial-gradient(circle, ${team(f.away).primary}, transparent 70%)` }} />
         <div className="flex items-center justify-between">
-          <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{running ? <><span className="inline-block w-2 h-2 rounded-full bg-[var(--greenb)] gf-pulse mr-1.5 align-middle" />Live</> : "Match Centre"}</span>
-          <span className="mono text-[10px] text-[#9CA3AF]">{phase}</span>
+          <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{running && <span className="inline-block w-2 h-2 rounded-full bg-[var(--greenb)] gf-pulse mr-1.5 align-middle" />}{status}</span>
+          <span className="mono text-[10px] text-[#9CA3AF]">{running ? clock : ""}</span>
         </div>
         {SPOILER_SAFE ? (
           <div className="flex items-center justify-center gap-5 mt-4">

@@ -77,8 +77,14 @@ async function finishedFixtures(): Promise<{ fixtureId: number; home: string; aw
 export async function GET() {
   try {
     const pool = await finishedFixtures();
-    // Shuffle-deal: try fixtures until one yields stats (some may not be in the feed window).
-    for (const f of pool.sort(() => Math.random() - 0.5).slice(0, 4)) {
+    // Shuffle-deal: try fixtures until one yields stats.
+    //
+    // Only four were sampled before, and that was a coin-flip on a cold start: a fixture whose history
+    // has aged out of the feed answers 403, `finalStats` swallows it and returns null, and four unlucky
+    // draws produced a 503 on the very first request to a fresh deployment — which is precisely the
+    // request a judge makes. Walk the pool instead of a corner of it; the 503 is then reserved for the
+    // case it actually names, which is having nothing to deal from at all.
+    for (const f of pool.sort(() => Math.random() - 0.5).slice(0, 12)) {
       const stats = await finalStats(f.fixtureId);
       if (!stats) continue;
       const s = STATS[Math.floor(Math.random() * STATS.length)];

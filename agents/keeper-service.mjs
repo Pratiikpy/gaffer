@@ -56,44 +56,54 @@ function record(entry) {
   return line;
 }
 
-/** One sweep. Never throws — a keeper that dies on a network blip is not a keeper. */
-async function tick() {
+/** The live slate worth settling on a fast tick — matches on now or about to be. A full-chain sweep walks
+ * every pool ever minted (many dead, 403-ing on every tick) and can't finish inside the serverless budget,
+ * so it 504s. We scope the fast keeper to the live fixtures and leave the whole-chain mop-up to the daily
+ * cron. Discovered from the same schedule the app and the supervisor use. */
+async function liveFixtures() {
+  try {
+    const { fixtures = [] } = await fetch(`${BASE}/api/fixtures`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json());
+    return fixtures.filter((f) => f.state === "live" || f.state === "soon").map((f) => Number(f.fixtureId)).filter(Boolean);
+  } catch { return []; }
+}
+
+/** Settle one fixture's open pools. Never throws — a keeper that dies on a network blip is not a keeper. */
+async function sweepOne(fixture) {
   const started = Date.now();
   try {
-    const url = FIXTURE ? `${BASE}/api/keeper?fixture=${FIXTURE}` : `${BASE}/api/keeper`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: AUTH_HEADERS,
-      signal: AbortSignal.timeout(110_000),
-    });
+    const res = await fetch(`${BASE}/api/keeper?fixture=${fixture}`, { method: "POST", headers: AUTH_HEADERS, signal: AbortSignal.timeout(55_000) });
     if (res.status === 401) {
       // Loud, not swallowed: a 401 means the settler is authenticated wrong and NO pool will ever pay —
       // exactly the silent failure that must never hide behind a heartbeat dot.
-      console.error(record({ event: "settle_auth_fail", status: 401, note: "keeper unauthorized — set EAR_COMMIT_SECRET (or GAFFER_ADMIN_KEY) to the server's value" }));
+      console.error(record({ event: "settle_auth_fail", status: 401, fixture, note: "keeper unauthorized — set EAR_COMMIT_SECRET (or GAFFER_ADMIN_KEY) to the server's value" }));
       return { fatal: true };
     }
     const body = await res.json().catch(() => ({ error: "unparseable response" }));
-
-    // Only shout when something actually happened. A quiet keeper on a quiet night is correct — but a pool
-    // that THREW on settle (body.errored) is a stuck payout, not quiet, so it must never fall to a silent
-    // dot. `errored` is the keeper route's real-failure channel, kept apart from benign "no proof yet".
+    // Shout on real action or a real failure (body.errored = a pool that THREW), stay a quiet dot otherwise.
     const paid = (body.settled?.length || 0) + (body.voided?.length || 0) + (body.slips?.length || 0);
-    if (paid > 0 || body.error || body.errored?.length) {
-      console.log(record({ event: "sweep", status: res.status, paid, ...body }));
-    } else {
-      record({ event: "sweep", status: res.status, paid: 0, swept: body.swept, ms: body.ms });
-      process.stdout.write(".");
-    }
+    if (paid > 0 || body.error || body.errored?.length) console.log(record({ event: "sweep", status: res.status, fixture, paid, ...body }));
+    else { record({ event: "sweep", status: res.status, fixture, paid: 0, swept: body.swept, ms: body.ms }); process.stdout.write("."); }
     return { fatal: false };
   } catch (e) {
-    console.log(record({ event: "error", ms: Date.now() - started, error: String(e?.message || e) }));
+    console.log(record({ event: "error", fixture, ms: Date.now() - started, error: String(e?.message || e) }));
     return { fatal: false };
   }
 }
 
+/** One tick: settle an explicit fixture if given, else the whole live slate one match at a time (so each
+ * call stays inside the serverless budget). Idle when nothing is on — the daily cron is the backstop. */
+async function tick() {
+  const fixtures = FIXTURE ? [FIXTURE] : await liveFixtures();
+  if (!fixtures.length) { process.stdout.write("·"); return { fatal: false }; }
+  let fatal = false;
+  for (const f of fixtures) { if ((await sweepOne(f)).fatal) fatal = true; }
+  return { fatal };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-console.log(`keeper → ${BASE}${FIXTURE ? ` · fixture ${FIXTURE}` : " · all fixtures"} every ${INTERVAL_MS / 1000}s${ADMIN_KEY ? "" : "  (no admin key: dev-open servers only)"}`);
+const authMode = ADMIN_KEY ? "admin key" : EAR_SECRET ? "agent secret" : "UNAUTHENTICATED — settles nothing";
+console.log(`keeper → ${BASE}${FIXTURE ? ` · fixture ${FIXTURE}` : " · live slate"} every ${INTERVAL_MS / 1000}s  (auth: ${authMode})`);
 console.log(`log    → ${logFile()}`);
 record({ event: "start", base: BASE, fixture: FIXTURE || null, intervalMs: INTERVAL_MS, once: ONCE });
 

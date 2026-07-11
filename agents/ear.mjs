@@ -179,7 +179,12 @@ async function score(fixtureId) {
   const calledGoals = calls.filter((c) => c.kind === "goal");
   // What actually happened, from the signed feed (available once the match finalised).
   const truth = await jfetch(`${BASE}/api/match-events?fixture=${fixtureId}`).then((r) => r.json()).catch(() => null);
-  if (!truth || truth.finished === false) { console.log(`Match ${fixtureId} not finalised in the feed yet — can't grade.`); return; }
+  if (!truth || truth.finished === false) {
+    console.log(truth?.error
+      ? `Match ${fixtureId} — feed unavailable (${truth.error}), can't grade yet; will retry.`
+      : `Match ${fixtureId} not finalised in the feed yet — can't grade.`);
+    return;
+  }
   const actualGoals = Number(truth.homeGoals || 0) + Number(truth.awayGoals || 0);
   const callHome = calledGoals.filter((c) => c.side === "home").length;
   const callAway = calledGoals.filter((c) => c.side === "away").length;

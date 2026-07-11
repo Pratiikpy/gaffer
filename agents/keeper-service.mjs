@@ -67,9 +67,11 @@ async function tick() {
     }
     const body = await res.json().catch(() => ({ error: "unparseable response" }));
 
-    // Only shout when something actually happened. A quiet keeper on a quiet night is correct.
+    // Only shout when something actually happened. A quiet keeper on a quiet night is correct — but a pool
+    // that THREW on settle (body.errored) is a stuck payout, not quiet, so it must never fall to a silent
+    // dot. `errored` is the keeper route's real-failure channel, kept apart from benign "no proof yet".
     const paid = (body.settled?.length || 0) + (body.voided?.length || 0) + (body.slips?.length || 0);
-    if (paid > 0 || body.error) {
+    if (paid > 0 || body.error || body.errored?.length) {
       console.log(record({ event: "sweep", status: res.status, paid, ...body }));
     } else {
       record({ event: "sweep", status: res.status, paid: 0, swept: body.swept, ms: body.ms });

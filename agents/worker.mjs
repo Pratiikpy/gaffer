@@ -74,18 +74,36 @@ function stopOne(key) {
 // window (it has finished), poke the keeper for that fixture — repeatedly over ~20 minutes, because the
 // signed proof anchors a few minutes after full-time. Pools settle in minutes, not up to a day. The keeper
 // re-verifies every proof on-chain, so this can only ASK it to settle, never misdirect a payout.
-const settleQueue = new Map();   // fixtureId -> attempts left
+const settleQueue = new Map();   // fixtureId -> { left, total } — pokes remaining, and a lifetime cap
+const SETTLE_TRIES = 8;          // 8 × 3min ≈ 24min: covers the usual few-minute post-full-time anchor
+const SETTLE_MAX = 24;           // hard lifetime cap (~72min) if the proof is slow AND pools are still open
 let watched = new Set();
 async function settleTick() {
   const secret = process.env.EAR_COMMIT_SECRET;
-  for (const [f, left] of [...settleQueue]) {
+  const hdr = secret ? { "x-ear-key": secret } : {};
+  for (const [f, st] of [...settleQueue]) {
+    let stillOpen = false;
     try {
-      const r = await fetch(`${BASE}/api/keeper?fixture=${f}`, { headers: secret ? { "x-ear-key": secret } : {}, signal: AbortSignal.timeout(55_000) }).then((x) => x.json()).catch(() => null);
-      const paid = r?.paid ?? 0;
+      const r = await fetch(`${BASE}/api/keeper?fixture=${f}`, { headers: hdr, signal: AbortSignal.timeout(55_000) }).then((x) => x.json()).catch(() => null);
+      // `paid` counts pools the keeper actually settled/voided/paid this poke; `errored` is a stuck payout
+      // (a throw the keeper caught). Log either — the log is the Track-3 evidence, and a settle that keeps
+      // failing must not vanish into a silent retry.
+      const paid = (r?.settled?.length || 0) + (r?.voided?.length || 0) + (r?.slips?.length || 0);
       if (paid > 0) log({ event: "settled", fixture: f, paid, sigs: (r.settled || []).map((s) => s.sig).slice(0, 5) });
+      if (r?.errored?.length) log({ event: "settle_stuck", fixture: f, errored: r.errored.slice(0, 5) });
+      stillOpen = Number(r?.swept?.markets || 0) > 0;   // pools this fixture still hasn't settled
+      // Grade the daily free call ("Goal before half-time?") off the same finished feed — idempotent, so a
+      // repeat poke is harmless. Points only, never SOL; keyed to the fixture's single YES/NO truth.
+      await fetch(`${BASE}/api/grade-picks?fixture=${f}`, { method: "POST", headers: hdr, signal: AbortSignal.timeout(55_000) })
+        .then((x) => x.json()).then((g) => { if (g?.graded > 0) log({ event: "picks_graded", fixture: f, graded: g.graded, yesWon: g.yesWon }); })
+        .catch(() => { /* the retry budget covers it */ });
     } catch { /* transient — the retry budget covers it */ }
-    const n = left - 1;
-    if (n <= 0) settleQueue.delete(f); else settleQueue.set(f, n);
+    // Keep poking while pools remain open, up to the lifetime cap; otherwise let the budget run down. The
+    // daily cron is still the final backstop for anything a slow proof outlasts even this.
+    const left = st.left - 1, total = st.total + 1;
+    if (left > 0) settleQueue.set(f, { left, total });
+    else if (stillOpen && total < SETTLE_MAX) settleQueue.set(f, { left: 2, total });   // proof late, pools open → extend
+    else settleQueue.delete(f);
   }
 }
 
@@ -103,7 +121,7 @@ async function reconcile() {
 
   // A fixture that was live/soon and is now gone has finished — queue its pools for prompt settlement.
   const nowSet = new Set(fixtures);
-  for (const f of watched) if (!nowSet.has(f) && !settleQueue.has(f)) { settleQueue.set(f, 8); log({ event: "settle_enqueue", fixture: f }); }
+  for (const f of watched) if (!nowSet.has(f) && !settleQueue.has(f)) { settleQueue.set(f, { left: SETTLE_TRIES, total: 0 }); log({ event: "settle_enqueue", fixture: f }); }
   watched = nowSet;
 
   const watching = [...nowSet];

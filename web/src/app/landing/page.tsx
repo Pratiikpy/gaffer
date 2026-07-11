@@ -19,8 +19,8 @@ export default function Landing() {
   const games = GAMES.filter((g) => g.status === "live");
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
-      <div className="max-w-[440px] mx-auto px-6 py-10">
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)] md:flex md:items-center md:justify-center md:bg-[#E9E8E1] md:py-14">
+      <div className="max-w-[440px] mx-auto px-6 py-10 md:rounded-[32px] md:border md:border-[var(--line)] md:bg-[var(--bg)] md:shadow-[0_30px_80px_-24px_rgba(15,23,20,0.35)]">
         <div className="flex items-center gap-2">
           <span className="text-2xl font-extrabold tracking-tight">gaffer.</span>
           <span className="mono text-[9px] tracking-widest uppercase text-[var(--muted)]">The Tournament</span>
@@ -28,7 +28,7 @@ export default function Landing() {
 
         {/* Hero */}
         <h1 className="text-[40px] leading-[1.05] font-extrabold tracking-tight mt-10">Call it. Get paid the second it happens.</h1>
-        <p className="text-[17px] text-[var(--muted)] mt-4 leading-relaxed">The World Cup game you already play in the group chat — now real, and it settles itself. No bookie. No house. No one who can void your win.</p>
+        <p className="text-[17px] text-[var(--muted)] mt-4 leading-relaxed">The World Cup prediction game you already play in the group chat — now real, and it pays out on its own. No bookie. No house. No one who can void your win.</p>
 
         {/* Live proof strip — real numbers from the same feed the app runs on */}
         <div className="mt-6 rounded-2xl bg-[var(--ink)] text-white p-5">

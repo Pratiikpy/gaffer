@@ -2936,6 +2936,56 @@ function GafferTake({ moment, home, away }: { moment: { kind: string; who: strin
   );
 }
 
+/** THE GAFFER'S EAR — the autonomous agent that reads events (goal / stoppage / full-time) from the live
+ * market alone, before the score feed carries them. Each call is committed on-chain the instant it's made;
+ * we show the call and a link to that proof. Hidden until it has actually called something. */
+type EarCall = { kind: string; side: string | null; team: string | null; confidence: number; evidence: string; sig: string | null; ts: number };
+function GafferEar({ fixtureId }: { fixtureId: number }) {
+  const [calls, setCalls] = useState<EarCall[]>([]);
+  useEffect(() => {
+    if (!fixtureId) return;
+    let on = true;
+    const read = () => fetch(`/api/ear-calls?fixture=${fixtureId}`).then((r) => r.json()).then((d) => { if (on) setCalls(d.calls || []); }).catch(() => {});
+    read();
+    const t = POLL ? setInterval(read, 15_000) : null;
+    return () => { on = false; if (t) clearInterval(t); };
+  }, [fixtureId]);
+  if (!calls.length) return null;
+
+  const headline = (c: EarCall) =>
+    c.kind === "goal" ? `GOAL${c.team ? " — " + c.team : c.side === "draw" ? " — leveller" : ""}`
+    : c.kind === "stoppage" ? "Under review" : "Full time";
+  const glyph = (c: EarCall) =>
+    c.kind === "goal" ? <TimelineIcon kind="goal" />
+    : c.kind === "stoppage" ? <span className="inline-block w-3 h-3 rounded-[2px] bg-[#F5B01A]" />
+    : <span className="mono text-[9px] font-bold text-[var(--muted)]">FT</span>;
+
+  return (
+    <div className="mt-4 rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: "linear-gradient(135deg,#0b2a1e,#08130d)" }}>
+      <div className="flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--greenb)] gf-pulse" />
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">The Gaffer&apos;s Ear</span>
+      </div>
+      <div className="mono text-[9px] text-white/40 mt-1">reads the match from the market — before the score feed. every call proved on-chain.</div>
+      <div className="mt-3 space-y-2.5">
+        {calls.slice(0, 5).map((c, i) => (
+          <div key={i} className="flex items-start gap-3">
+            <span className="w-5 mt-0.5 flex items-center justify-center shrink-0">{glyph(c)}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[14px] font-bold leading-tight">{headline(c)}</span>
+                <span className="mono text-[9px] text-white/40">{(c.confidence * 100) | 0}%</span>
+              </div>
+              <div className="text-[11px] text-white/55 leading-snug mt-0.5">{c.evidence}</div>
+            </div>
+            {c.sig && <a href={`https://explorer.solana.com/tx/${c.sig}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="mono text-[9px] text-[var(--greenb)] shrink-0 mt-0.5 whitespace-nowrap">proof ↗</a>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** L7/L8 — the halftime beat. Halftime is ~6x the per-minute engagement of open play, so the break gets
  * one real decision: stick with your call, or twist it to the other side. Exactly one move per matchday,
  * at a fixed stake — the anti-predatory version of in-play agency. */
@@ -3123,6 +3173,9 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
 
       {/* THE GAFFER'S TAKE — AI pundit on the real feed (the track's "AI Pundit", with voice). */}
       <GafferTake moment={bigMoment} home={f.home} away={f.away} />
+
+      {/* THE GAFFER'S EAR — the autonomous agent reading events from the market, each with on-chain proof. */}
+      <GafferEar fixtureId={fixtureId} />
 
       {/* THE FROZEN WINDOW — the one surface that opens exactly when every sportsbook locks its doors. */}
       <div className="mt-4 rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: "linear-gradient(135deg,#111,#0b2a1e)" }}>

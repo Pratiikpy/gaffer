@@ -212,6 +212,22 @@ const statements = [
      ts bigint NOT NULL,
      PRIMARY KEY (user_id, market)
    )`,
+
+  // The Gaffer's Ear — each event the agent inferred from the market alone, with its on-chain proof.
+  // Written by /api/commit-ear (server-authoritative ts + the Memo signature), read by the live app feed.
+  `CREATE TABLE IF NOT EXISTS ear_calls (
+     id bigserial PRIMARY KEY,
+     fixture_id bigint NOT NULL,
+     kind text NOT NULL,                     -- goal | stoppage | fulltime
+     side text,                              -- home | away | draw (goals only)
+     team text,                              -- resolved team name at call time
+     confidence real NOT NULL DEFAULT 0,
+     evidence text,                          -- the market reasoning, in words
+     sig text,                               -- Solana Memo signature (the on-chain proof)
+     hash text,
+     ts bigint NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS ear_calls_fixture ON ear_calls (fixture_id, ts DESC)`,
 ];
 
 let ok = 0;

@@ -3,6 +3,7 @@ import { Connection, PublicKey, Transaction, TransactionInstruction } from "@sol
 import { createHash } from "node:crypto";
 import { loadServerKeypair } from "@/lib/serverConfig";
 import { RPC } from "@/lib/config";
+import { db } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,6 +72,13 @@ export async function POST(req: NextRequest) {
 
     lastByFixture.set(fixtureId, Date.now());
     windowCount += 1;
+
+    // Persist the call so the live app feed can show it, with its on-chain proof. Server ts, not the
+    // agent's — the timestamp is authoritative here. Best-effort: a DB hiccup never fails a landed commit.
+    const team = String(b?.team || "").slice(0, 40);
+    await db()`INSERT INTO ear_calls (fixture_id, kind, side, team, confidence, evidence, sig, hash, ts)
+      VALUES (${fixtureId}, ${kind}, ${side || null}, ${team || null}, ${conf}, ${evidence}, ${sig}, ${digest}, ${Date.now()})`.catch(() => {});
+
     return NextResponse.json({ ok: true, sig, hash: digest, memo, ts });
   } catch (e: any) {
     return NextResponse.json({ ok: false, reason: (e?.message || "commit failed").slice(0, 120) }, { status: 500 });

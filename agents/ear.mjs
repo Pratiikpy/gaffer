@@ -57,7 +57,7 @@ export function readEvent(prev, next, silentMs = 0, wasRunning = true, isRunning
   // review — a VAR check, a booking, an injury. This is the moment every sportsbook locks its doors.
   if (silentMs >= SUSPEND_MS) {
     return { kind: "stoppage", side: null, confidence: Math.min(0.9, 0.4 + silentMs / 120_000), move: Math.round(move),
-      evidence: `market frozen ${Math.round(silentMs / 1000)}s with no resolving move — a stoppage under review` };
+      evidence: `market frozen ${Math.round(silentMs / 1000)}s with no resolving move - a stoppage under review` };
   }
 
   return null;

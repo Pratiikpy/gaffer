@@ -4,14 +4,9 @@ import { db } from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const FLAG: Record<string, string> = {
-  USA: "🇺🇸", Brazil: "🇧🇷", Argentina: "🇦🇷", France: "🇫🇷", England: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", Spain: "🇪🇸",
-  Mexico: "🇲🇽", Germany: "🇩🇪", Portugal: "🇵🇹", Netherlands: "🇳🇱", Australia: "🇦🇺", Canada: "🇨🇦",
-  Morocco: "🇲🇦", Japan: "🇯🇵", Senegal: "🇸🇳", Croatia: "🇭🇷", Belgium: "🇧🇪", Italy: "🇮🇹",
-};
-
-/** Real nation standings: sum each player's points by the flag they fly. Honest — the numbers move
- * as people earn points, and only nations that actually have players appear. */
+/** Real nation standings: sum each player's points by the nation they fly. Honest — the numbers move
+ * as people earn points, and only nations that actually have players appear. The client renders each
+ * nation with the drawn flag-icons SVG (the <Flag> component, keyed on name), never an emoji. */
 export async function GET() {
   try {
     const rows = await db()`
@@ -23,7 +18,7 @@ export async function GET() {
       GROUP BY m.nation
       ORDER BY pts DESC, fans DESC
       LIMIT 24`;
-    const nations = (rows as any[]).map((r) => ({ name: r.nation, flag: FLAG[r.nation] || "🏳️", pts: Number(r.pts), fans: Number(r.fans) }));
+    const nations = (rows as any[]).map((r) => ({ name: r.nation, pts: Number(r.pts), fans: Number(r.fans) }));
     return NextResponse.json({ nations });
   } catch {
     return NextResponse.json({ nations: [] });

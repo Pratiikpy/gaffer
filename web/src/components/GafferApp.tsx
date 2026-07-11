@@ -2544,7 +2544,7 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
   const [code, setCode] = useState(pendingJoin || "");
   const [handle, setHandle] = useState(userName === "You" ? "" : userName);
   const [msg, setMsg] = useState("");
-  const [nations, setNations] = useState<{ name: string; flag: string; pts: number; fans: number }[]>([]);
+  const [nations, setNations] = useState<{ name: string; pts: number; fans: number }[]>([]);
   // The Adoption (N2): a second nation you back — worn as an origin chip. 66% of fans root for 2+ teams.
   const [adopted, setAdopted] = useState<string>(() => (typeof window !== "undefined" ? localStorage.getItem("gaffer_adopted") || "" : ""));
   // Fade Duels (S6) now live on the SERVER — the person you fade sees the same duel, and it settles off
@@ -2870,7 +2870,7 @@ function GafferTake({ moment, home, away }: { moment: { kind: string; who: strin
   return (
     <div className="mt-4 rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: "linear-gradient(135deg,#211048,#0b0620)" }}>
       <div className="flex items-center justify-between">
-        <div className="mono text-[10px] tracking-widest uppercase text-[#c4b5fd]">🎙️ The Gaffer&apos;s Take</div>
+        <div className="mono text-[10px] tracking-widest uppercase text-[#c4b5fd]">The Gaffer&apos;s Take</div>
         {line && <button onClick={speak} aria-label="Speak the take" className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm active:scale-90 transition-transform">🔊</button>}
       </div>
       <div className="text-[16px] font-bold mt-2 leading-snug min-h-[44px]">{loading ? "…reading the game" : line ? `“${line}”` : ""}</div>

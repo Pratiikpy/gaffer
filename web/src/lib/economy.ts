@@ -259,8 +259,11 @@ export async function rolloverPot(): Promise<{ lamports: number; sol: number; so
 /** The Mystery booster is visible from day one and only REVEALS at the knockout stage. What it turns out
  * to be — Double Down: your next correct call pays twice. It is armed when played and consumed by the
  * next graded win, so it is a real effect on the ledger, not a badge. */
-export const MYSTERY_REVEAL_ISO = "2026-07-11";
-export const KNOCKOUT_START_ISO = "2026-07-11";
+// The real World Cup 2026 knockout stage (Round of 32) begins 2026-06-28, after the group stage ends on
+// the 27th — this gates the knockout board and the booster reveal to the actual tournament phase, not to
+// whatever day the code was written.
+export const MYSTERY_REVEAL_ISO = "2026-06-28";
+export const KNOCKOUT_START_ISO = "2026-06-28";
 export const mysteryRevealed = (now = Date.now()) => now >= Date.parse(MYSTERY_REVEAL_ISO + "T00:00:00Z");
 export const knockoutStartMs = Date.parse(KNOCKOUT_START_ISO + "T00:00:00Z");
 export const MYSTERY_NAME = "Double Down";

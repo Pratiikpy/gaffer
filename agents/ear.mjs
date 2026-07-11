@@ -99,6 +99,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const logPath = () => resolve(ROOT, "logs", `ear-${new Date().toISOString().slice(0, 10)}.jsonl`);
 function logLine(entry) {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
@@ -110,7 +112,7 @@ const names = {};
 async function nameFor(f) {
   if (names[f]) return names[f];
   try {
-    const { fixtures = [] } = await fetch(`${BASE}/api/fixtures`).then((r) => r.json());
+    const { fixtures = [] } = await jfetch(`${BASE}/api/fixtures`).then((r) => r.json());
     for (const x of fixtures) names[x.fixtureId] = { home: x.homeTeam || x.home, away: x.awayTeam || x.away };
   } catch { /* ids are fine */ }
   return names[f] || { home: "home", away: "away" };
@@ -121,8 +123,8 @@ async function tick(fixtures, state) {
   for (const f of fixtures) {
     try {
       const [o, live] = await Promise.all([
-        fetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
-        fetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
+        jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
+        jfetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
       ]);
       const st = state[f] || (state[f] = { prev: null, everRan: false, closedSince: 0, calledFT: false });
       const isRunning = !!(live?.running);
@@ -151,7 +153,7 @@ async function tick(fixtures, state) {
       const headers = { "content-type": "application/json" };
       if (process.env.EAR_COMMIT_SECRET) headers["x-ear-key"] = process.env.EAR_COMMIT_SECRET;
       else if (process.env.GAFFER_ADMIN_KEY) headers["x-gaffer-key"] = process.env.GAFFER_ADMIN_KEY;
-      const commit = await fetch(`${BASE}/api/commit-ear`, {
+      const commit = await jfetch(`${BASE}/api/commit-ear`, {
         method: "POST", headers,
         body: JSON.stringify({ fixtureId: f, kind: ev.kind, side: ev.side, team: teamName(ev.side, nm), confidence: ev.confidence, evidence: ev.evidence }),
       }).then((r) => r.json()).catch(() => null);
@@ -176,7 +178,7 @@ async function score(fixtureId) {
   } catch { /* no logs */ }
   const calledGoals = calls.filter((c) => c.kind === "goal");
   // What actually happened, from the signed feed (available once the match finalised).
-  const truth = await fetch(`${BASE}/api/match-events?fixture=${fixtureId}`).then((r) => r.json()).catch(() => null);
+  const truth = await jfetch(`${BASE}/api/match-events?fixture=${fixtureId}`).then((r) => r.json()).catch(() => null);
   if (!truth || truth.finished === false) { console.log(`Match ${fixtureId} not finalised in the feed yet — can't grade.`); return; }
   const actualGoals = Number(truth.homeGoals || 0) + Number(truth.awayGoals || 0);
   const callHome = calledGoals.filter((c) => c.side === "home").length;
@@ -195,7 +197,7 @@ async function score(fixtureId) {
 async function main() {
   if (process.argv.includes("--selftest")) return selftest();
   if (process.argv.includes("--score")) { const id = Number(arg("score", process.argv[process.argv.indexOf("--score") + 1])); if (!id) { console.log("usage: node ear.mjs --score <fixtureId>"); process.exit(1); } return score(id); }
-  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  const fixtures = process.argv.slice(2).filter((a, i, arr) => !arr.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node ear.mjs <fixtureId…> [--interval 20] [--once] [--base URL]  |  --score <id>  |  --selftest"); process.exit(1); }
   const intervalMs = Number(arg("interval", 20)) * 1000;
   const once = process.argv.includes("--once");

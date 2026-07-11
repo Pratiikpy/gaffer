@@ -63,6 +63,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const STRATS = ["favorite", "underdog"];
 
 function logLine(entry) {
@@ -77,8 +79,8 @@ async function tick(fixtures, book) {
     if (st.settled) continue;
     try {
       const [o, live] = await Promise.all([
-        fetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
-        fetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
+        jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
+        jfetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
       ]);
       // Lock each strategy's pick off the first live line we see.
       if (!st.picks && o?.hasOdds) {
@@ -105,7 +107,7 @@ async function tick(fixtures, book) {
 
 async function main() {
   if (process.argv.includes("--selftest")) return selftest();
-  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  const fixtures = process.argv.slice(2).filter((a, i, arr) => !arr.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node arena.mjs <fixtureId…> [--interval 60] [--base URL]   |   --selftest"); process.exit(1); }
   const intervalMs = Number(arg("interval", 60)) * 1000;
   const once = process.argv.includes("--once");

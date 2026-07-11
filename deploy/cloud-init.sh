@@ -15,7 +15,7 @@ git clone --depth 1 https://github.com/Pratiikpy/gaffer /opt/gaffer
 
 cat >/etc/systemd/system/gaffer-agents.service <<'UNIT'
 [Unit]
-Description=GAFFER autonomous trading agents (detector, market-maker, clv-tracker, arena)
+Description=GAFFER autonomous agents (Ear, detector, market-maker, clv-tracker, arena, Read)
 After=network-online.target
 Wants=network-online.target
 
@@ -24,6 +24,10 @@ Type=simple
 Environment=GAFFER_API=https://gaffer-cyan.vercel.app
 Environment=INTERVAL=45
 Environment=REFRESH_SECS=300
+# EAR_COMMIT_SECRET authenticates the Ear's on-chain commit (must match the prod env var of the same name).
+# Passed in from the provisioning environment; the agents still run and log without it, but the Ear cannot
+# anchor its calls on-chain until it is set. See deploy/README.md.
+Environment=EAR_COMMIT_SECRET=${EAR_COMMIT_SECRET:-}
 WorkingDirectory=/opt/gaffer
 ExecStart=/usr/bin/node /opt/gaffer/agents/worker.mjs
 Restart=always

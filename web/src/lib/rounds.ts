@@ -24,32 +24,21 @@ export type RoundView = {
   outcome: string | null; lore: string | null;
   sweat: { t: number; pct: number }[];
   tally: Record<string, number>;           // real named calls, per side
-  roomTally: Record<string, number>;       // real calls + the ambient room's lean (display "the room")
-  presence: number;                        // fans in this window right now (ambient room + real callers)
+  roomTally: Record<string, number>;       // the real room, per option (same as tally, all options keyed)
+  presence: number;                        // real people who have called it in this window — no padding
   calls: { userId: string; name: string; side: string; correct: boolean | null }[];
 };
 
 const rid = () => "r" + crypto.randomBytes(8).toString("hex");
 
-/** A stable pseudo-random 0..1 from a string — used to give each round its OWN ambient room size and
- * lean so the count/split are consistent across every poll (not re-rolled each read) yet vary per round. */
-function seed01(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; }
-
-/** The ambient "room" around a round — a  present, growing crowd so a window never reads a lonely "0 in".
- * This is the social backdrop (like "1.2k watching"), kept honestly separate from the REAL named squad
- * calls and the REAL settle data. It ramps up across the call window, then holds through the sweat. */
-function roomOf(r: any, now: number, realTally: Record<string, number>): { presence: number; roomTally: Record<string, number> } {
-  const base = 22 + Math.floor(seed01(r.id) * 96); // 22..117 fans, unique per round
-  const openedAt = Number(r.opened_at), locksAt = Number(r.locks_at);
-  const ramp = Math.max(0, Math.min(1, (now - openedAt) / Math.max(1, locksAt - openedAt)));
-  const ambient = Math.round(base * (0.45 + 0.55 * ramp)); // fills up as the lock approaches
-  const opts: string[] = r.options || [];
+/** The room around a round: the REAL people who called it, split by option. No fabricated crowd — the app
+ * shows the true count, and when it's small the UI says so honestly rather than padding it with a fake
+ * "84 in the window". Every option is present as a key (0 if nobody took it) so the split renders cleanly. */
+function roomOf(r: any, _now: number, realTally: Record<string, number>): { presence: number; roomTally: Record<string, number> } {
   const roomTally: Record<string, number> = {};
-  // Deterministic ambient lean across the options (weights sum ~1), then add the real named calls on top.
-  const weights = opts.map((_, i) => 0.7 + seed01(r.id + i)); const wsum = weights.reduce((a, b) => a + b, 0);
-  opts.forEach((o, i) => { roomTally[o] = Math.round(ambient * (weights[i] / wsum)) + (realTally[o] || 0); });
-  const realCount = Object.values(realTally).reduce((a, b) => a + b, 0);
-  return { presence: ambient + realCount, roomTally };
+  for (const o of (r.options as string[] | undefined) || []) roomTally[o] = realTally[o] || 0;
+  const presence = Object.values(roomTally).reduce((a, b) => a + b, 0);
+  return { presence, roomTally };
 }
 
 /** Total goals on the board right now (Stats keys 1 + 2). Cached briefly so opening/settling a round

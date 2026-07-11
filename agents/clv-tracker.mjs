@@ -47,6 +47,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const SIDE = ["home", "draw", "away"].includes(arg("side", "home")) ? arg("side", "home") : "home";
 const SEED_ENTRY = process.argv.includes("--entry") ? Number(arg("entry", "")) : null;
 
@@ -62,8 +64,8 @@ async function tick(fixtures, state) {
     if (st.closed) continue;
     try {
       const [o, live] = await Promise.all([
-        fetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
-        fetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
+        jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
+        jfetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
       ]);
       if (!o?.hasOdds) continue;
       const line = o[SIDE];
@@ -88,7 +90,7 @@ async function tick(fixtures, state) {
 
 async function main() {
   if (process.argv.includes("--selftest")) return selftest();
-  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  const fixtures = process.argv.slice(2).filter((a, i, arr) => !arr.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node clv-tracker.mjs <fixtureId…> [--side home|draw|away] [--entry PCT] [--interval 60] [--base URL]   |   --selftest"); process.exit(1); }
   const intervalMs = Number(arg("interval", 60)) * 1000;
   const once = process.argv.includes("--once");

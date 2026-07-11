@@ -14,6 +14,7 @@
  */
 import "server-only";
 import { db } from "./db";
+import { txline } from "./txline";
 
 export const PICK_SECS = 40;
 
@@ -158,10 +159,19 @@ export async function nationOwners(squadCode: string): Promise<Record<string, { 
   return out;
 }
 
-/** The nations a draft can offer. Canonical list, matching the app's nation board. */
+/** The nations a draft can offer — the teams ACTUALLY in the tournament, read from the live TxLINE
+ * schedule (both participants of every fixture), so a squad drafts real, current nations rather than a
+ * stale hand-typed list. Falls back to a canonical real-World-Cup set only if the feed is unavailable —
+ * never test data. */
 export async function boardNations(): Promise<string[]> {
+  try {
+    const fx = await txline().fixturesSnapshot();
+    const nations = new Set<string>();
+    for (const f of fx as any[]) { if (f?.Participant1) nations.add(String(f.Participant1)); if (f?.Participant2) nations.add(String(f.Participant2)); }
+    if (nations.size >= 8) return [...nations].sort();
+  } catch { /* fall through to the canonical set */ }
   return [
-    "USA", "Belgium", "Argentina", "Egypt", "Switzerland", "Colombia", "France", "Morocco",
-    "Spain", "England", "Brazil", "Australia", "Norway", "Vietnam", "Myanmar", "Mexico",
+    "USA", "Brazil", "Argentina", "France", "England", "Spain", "Germany", "Netherlands",
+    "Portugal", "Belgium", "Croatia", "Morocco", "Mexico", "Japan", "Italy", "Norway",
   ];
 }

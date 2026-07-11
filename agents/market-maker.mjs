@@ -67,6 +67,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const PULL_PTS = Number(process.env.PULL_THRESHOLD || arg("pull", 6));   // implied-% jump that pulls quotes
 const SPREAD_BPS = Number(process.env.SPREAD_BPS || arg("spread", 400));
 
@@ -79,7 +81,7 @@ function logLine(entry) {
 async function tick(fixtures, state) {
   for (const f of fixtures) {
     try {
-      const o = await fetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
+      const o = await jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
       if (!o?.hasOdds) continue;
       const now = { home: o.home, draw: o.draw, away: o.away };
       const shock = decisiveMove(state[f], now, PULL_PTS);
@@ -99,7 +101,7 @@ async function tick(fixtures, state) {
 
 async function main() {
   if (process.argv.includes("--selftest")) return selftest();
-  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  const fixtures = process.argv.slice(2).filter((a, i, arr) => !arr.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node market-maker.mjs <fixtureId…> [--interval 30] [--once] [--base URL]   |   --selftest"); process.exit(1); }
   const intervalMs = Number(arg("interval", 30)) * 1000;
   const once = process.argv.includes("--once");

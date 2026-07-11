@@ -282,12 +282,15 @@ export default function GafferApp() {
       if (!list.length) return;
       learnFixtures(list);
       setFixtures(list);
-      // Default to a fixture that already has live pools (the seeded demo match, richest experience),
-      // else the match that's on now / next up, else the fallback replay fixture.
-      const withPools = markets.find((m) => list.some((f: any) => String(f.fixtureId) === m.fixtureId) && Number(m.threshold) >= 0 && Number(m.threshold) <= 40);
-      const live = list.find((f: any) => f.state === "live") || list.find((f: any) => f.state === "soon");
-      if (fixtureChosen.current) return;   // a shared link, or the fan's own tap, wins
-      setSelectedFixture((cur) => (cur !== 18172379 ? cur : Number(withPools?.fixtureId || live?.fixtureId || 18172379)));
+      // Lead with the match that's actually ON — live now, then kicking-off-soon, then the next upcoming
+      // fixture on the real schedule. A finished match is never the default (it used to default to whatever
+      // had the seeded demo pool, which anchored a real user on a finished game instead of what's live).
+      if (fixtureChosen.current) return;   // a shared link, or the fan's own tap, always wins
+      const live = list.find((f: any) => f.state === "live");
+      const soon = list.find((f: any) => f.state === "soon");
+      const upcoming = [...list].filter((f: any) => f.state !== "finished").sort((a: any, b: any) => a.startTime - b.startTime)[0];
+      const pick = live?.fixtureId ?? soon?.fixtureId ?? upcoming?.fixtureId ?? list[0]?.fixtureId;
+      if (pick) setSelectedFixture(Number(pick));
     });
   }, [markets.length]);
 
@@ -3229,7 +3232,10 @@ function FrozenWindow({ round, userId, onCall, onDismiss, onPinLore }: any) {
   const sweat: { t: number; pct: number }[] = round.sweat || [];
   const lastPct = sweat.length ? sweat[sweat.length - 1].pct : null;
   const won = settled && myCall && myCall === round.outcome;
-  const roomReadPct = settled && round.outcome ? Math.round(((roomTally[round.outcome] || 0) / roomTotal) * 100) : null;
+  // A "% of the room" only means something with enough real callers — below that it's noise (2 people =
+  // "50%"). Mirror how recap/economy null-out small cohorts: no percentage until the room is real.
+  const ROOM_FLOOR = 4;
+  const roomReadPct = settled && round.outcome && presence >= ROOM_FLOOR ? Math.round(((roomTally[round.outcome] || 0) / roomTotal) * 100) : null;
 
   // option → label (Blackout maps HOME/AWAY to team names)
   const optLabel = (o: string) => (o === "HOME GOAL" ? `${f.home} GOAL` : o === "AWAY GOAL" ? `${f.away} GOAL` : o);
@@ -3281,19 +3287,22 @@ function FrozenWindow({ round, userId, onCall, onDismiss, onPinLore }: any) {
           </div>
           {myCall && <div className="mt-3 mono text-[11px] text-white/60">You called <b className="text-white">{optLabel(myCall)}</b></div>}
 
-          {/* the room, live — how everyone in this window is splitting right now (ambient crowd + real calls) */}
-          <div className="mt-5 w-full max-w-xs">
-            <div className="flex h-2.5 rounded-full overflow-hidden bg-white/10">
-              {round.options.map((o: string) => {
-                const w = ((roomTally[o] || 0) / roomTotal) * 100;
-                const col = o === "STANDS" ? "var(--green)" : o === "OVERTURNED" ? "#dc2626" : o === "HOME GOAL" ? "var(--greenb)" : o === "AWAY GOAL" ? "#f59e0b" : "#6b7280";
-                return <div key={o} style={{ width: `${w}%`, background: col }} className="transition-all duration-500" />;
-              })}
+          {/* The room, live — how the REAL people in this window are splitting. Only shown once enough have
+              called for a split to mean anything; below that the named-calls rail below carries it. */}
+          {presence >= ROOM_FLOOR && (
+            <div className="mt-5 w-full max-w-xs">
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-white/10">
+                {round.options.map((o: string) => {
+                  const w = ((roomTally[o] || 0) / roomTotal) * 100;
+                  const col = o === "STANDS" ? "var(--green)" : o === "OVERTURNED" ? "#dc2626" : o === "HOME GOAL" ? "var(--greenb)" : o === "AWAY GOAL" ? "#f59e0b" : "#6b7280";
+                  return <div key={o} style={{ width: `${w}%`, background: col }} className="transition-all duration-500" />;
+                })}
+              </div>
+              <div className="mt-1.5 flex justify-between mono text-[9px] text-white/45">
+                {round.options.map((o: string) => (<span key={o}>{optLabel(o)} {Math.round(((roomTally[o] || 0) / roomTotal) * 100)}%</span>))}
+              </div>
             </div>
-            <div className="mt-1.5 flex justify-between mono text-[9px] text-white/45">
-              {round.options.map((o: string) => (<span key={o}>{optLabel(o)} {Math.round(((roomTally[o] || 0) / roomTotal) * 100)}%</span>))}
-            </div>
-          </div>
+          )}
 
           {/* the squad rail — the real named people calling it, in-frame beside you */}
           {namedCalls.length > 0 && (
@@ -3318,7 +3327,7 @@ function FrozenWindow({ round, userId, onCall, onDismiss, onPinLore }: any) {
               )}
             </div>
           )}
-          <div className="mt-5 flex items-center gap-2 mono text-[11px] text-white/45"><span className="w-1.5 h-1.5 rounded-full bg-[var(--greenb)] gf-pulse" /><b className="text-white/80 tabular-nums">{Math.round(disp)}</b> in the window — verdict pays the readers</div>
+          <div className="mt-5 flex items-center gap-2 mono text-[11px] text-white/45"><span className="w-1.5 h-1.5 rounded-full bg-[var(--greenb)] gf-pulse" />{presence > 0 ? <><b className="text-white/80 tabular-nums">{Math.round(disp)}</b> in the window — verdict pays the readers</> : <>be the first to call it — verdict pays the readers</>}</div>
         </>
       ) : (
         /* ── the reveal ── */

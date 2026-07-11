@@ -9,7 +9,12 @@
  * to watch live.
  */
 import { fileURLToPath } from "node:url";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = process.env.GAFFER_API || "http://127.0.0.1:3000";
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const THRESHOLD = Number(process.env.MOVE_THRESHOLD || 5); // implied-% points to flag a "sharp move"
 
 /** Pure, deterministic: given prev/next {home,draw,away} implied %, return the biggest qualifying move
@@ -27,7 +32,7 @@ export function detectMove(prev, next, threshold = THRESHOLD) {
 async function poll(fixtures, state, onSignal) {
   for (const f of fixtures) {
     try {
-      const o = await fetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
+      const o = await jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
       if (!o?.hasOdds) continue;
       const sig = detectMove(state[f], o);
       if (sig) onSignal({ ts: new Date().toISOString(), fixture: f, ...sig });
@@ -48,13 +53,14 @@ async function main() {
     process.exit(ok ? 0 : 1);
   }
 
-  const fixtures = args.map(Number).filter(Boolean);
+  const fixtures = args.filter((a, i) => !args.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node detector.mjs <fixtureId…>   |   node detector.mjs --selftest"); process.exit(1); }
   const state = {};
-  const signals = [];
   console.log(`Sharp Movement Detector · watching ${fixtures.join(", ")} every 60s · threshold ${THRESHOLD}pt`);
   const tick = async () => poll(fixtures, state, (s) => {
-    signals.push(s);
+    // Each signal is appended to a kept JSONL log, so the detector's decisions are auditable/backtestable
+    // (matching every other agent) — not just interleaved in stdout.
+    try { mkdirSync(resolve(ROOT, "logs"), { recursive: true }); appendFileSync(resolve(ROOT, "logs", `detector-${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ action: "sharp_move", ...s }) + "\n"); } catch { /* keep watching */ }
     console.log(`[SHARP MOVE] ${s.ts} · fixture ${s.fixture} · ${s.side} ${s.from}% → ${s.to}% (${s.move}pt swing)`);
   });
   await tick();

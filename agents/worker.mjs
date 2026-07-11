@@ -45,44 +45,52 @@ async function watchlist() {
   return fixtures.filter((f) => f.state === "live" || f.state === "soon").map((f) => Number(f.fixtureId)).filter(Boolean);
 }
 
-/** One child per agent, watching the given fixtures. Auto-restarts on unexpected exit (unless we killed it
- *  to reload a new slate). */
-const children = new Map();   // agent -> { proc, killedForReload }
+/** ONE child per (agent, fixture), so each match's agent keeps its own state for its whole life. When the
+ *  slate changes, only the affected matches start or stop — an unchanged match's agents are never killed,
+ *  so a CLV entry or an Arena pick locked before kickoff survives another fixture entering the window.
+ *  (The old design respawned every agent on any slate change, silently re-seeding those off the current,
+ *  possibly mid-match line.) Keyed "agent\x00fixture" so an agent name with a hyphen never collides. */
+const children = new Map();
 
-function startAgent(agent, fixtures) {
-  const args = [resolve(HERE, `${agent}.mjs`), ...fixtures.map(String), "--interval", String(process.env.INTERVAL || 45)];
+function startOne(agent, fixture) {
+  const key = `${agent}\x00${fixture}`;
+  const args = [resolve(HERE, `${agent}.mjs`), String(fixture), "--interval", String(process.env.INTERVAL || 45)];
   const proc = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, GAFFER_API: BASE }, stdio: ["ignore", "inherit", "inherit"] });
-  const rec = { proc, killedForReload: false };
+  const rec = { proc, stopped: false };
   proc.on("exit", (code) => {
-    if (rec.killedForReload) return;                     // expected — a reload is respawning it
-    log({ event: "agent_exit", agent, code, note: "restarting in 10s" });
-    setTimeout(() => { if (children.get(agent) === rec) startAgent(agent, fixtures); }, 10_000);
+    if (rec.stopped) return;                             // we killed it — match left the slate
+    log({ event: "agent_exit", agent, fixture, code, note: "restarting in 10s" });
+    setTimeout(() => { if (children.get(key) === rec) startOne(agent, fixture); }, 10_000);
   });
-  children.set(agent, rec);
+  children.set(key, rec);
 }
 
-function stopAll() {
-  for (const rec of children.values()) { rec.killedForReload = true; try { rec.proc.kill(); } catch { /* already gone */ } }
-  children.clear();
+function stopOne(key) {
+  const rec = children.get(key);
+  if (rec) { rec.stopped = true; try { rec.proc.kill(); } catch { /* already gone */ } children.delete(key); }
 }
 
-let current = "";
 let booted = false;
 async function reconcile() {
   let fixtures;
   try { fixtures = await watchlist(); }
   catch (e) { log({ event: "watchlist_error", error: String(e).slice(0, 120) }); return; }
 
-  const key = fixtures.slice().sort((a, b) => a - b).join(",");
-  if (key === current && booted) return;                 // slate unchanged — leave the agents running
-  current = key;
-  booted = true;
+  const want = new Set();
+  for (const f of fixtures) for (const a of AGENTS) want.add(`${a}\x00${f}`);
+  let changed = 0;
+  for (const key of [...children.keys()]) if (!want.has(key)) { stopOne(key); changed++; }   // match finished / dropped
+  for (const key of want) if (!children.has(key)) { const [a, f] = key.split("\x00"); startOne(a, Number(f)); changed++; }
 
-  stopAll();
-  if (!fixtures.length) { log({ event: "idle", note: "no live or soon fixtures — agents parked until kickoff" }); return; }
-  log({ event: "slate", fixtures, agents: AGENTS });
-  for (const a of AGENTS) startAgent(a, fixtures);
+  const watching = [...new Set([...children.keys()].map((k) => Number(k.split("\x00")[1])))];
+  if (changed) log({ event: "slate", watching, agents: AGENTS });
+  else if (!booted && !watching.length) log({ event: "idle", note: "no live or soon fixtures — agents parked until kickoff" });
+  booted = true;
 }
+
+// Clean shutdown when run bare (systemd's KillMode handles the deployed case, but a Ctrl-C shouldn't orphan
+// the whole fleet).
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { for (const k of [...children.keys()]) stopOne(k); process.exit(0); });
 
 log({ event: "boot", base: BASE, refreshSecs: REFRESH_MS / 1000, agents: AGENTS });
 await reconcile();

@@ -44,6 +44,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const jfetch = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(12_000) }); // every feed call is bounded
+
 const THRESHOLD = Number(process.env.MOVE_THRESHOLD || arg("threshold", 6));
 
 function logLine(entry) {
@@ -57,7 +59,7 @@ const names = {};
 async function nameFor(f) {
   if (names[f]) return names[f];
   try {
-    const { fixtures = [] } = await fetch(`${BASE}/api/fixtures`).then((r) => r.json());
+    const { fixtures = [] } = await jfetch(`${BASE}/api/fixtures`).then((r) => r.json());
     for (const x of fixtures) names[x.fixtureId] = { home: x.homeTeam || x.home, away: x.awayTeam || x.away };
   } catch { /* ids are fine */ }
   return names[f] || { home: `home ${f}`, away: `away ${f}` };
@@ -66,14 +68,14 @@ async function nameFor(f) {
 async function tick(fixtures, state) {
   for (const f of fixtures) {
     try {
-      const o = await fetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
+      const o = await jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json());
       if (!o?.hasOdds) continue;
       const now = { home: o.home, draw: o.draw, away: o.away };
       const move = detectMove(state[f], now, THRESHOLD);
       state[f] = now;
       if (!move) continue;
       const { home, away } = await nameFor(f);
-      const read = await fetch(`${BASE}/api/explain-move`, {
+      const read = await jfetch(`${BASE}/api/explain-move`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ home, away, side: move.side, from: move.from, to: move.to }),
       }).then((r) => r.json()).catch(() => null);
@@ -86,7 +88,7 @@ async function tick(fixtures, state) {
 
 async function main() {
   if (process.argv.includes("--selftest")) return selftest();
-  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  const fixtures = process.argv.slice(2).filter((a, i, arr) => !arr.slice(0, i + 1).some((x) => x.startsWith("--"))).map(Number).filter(Boolean);
   if (!fixtures.length) { console.log("usage: node explainer.mjs <fixtureId…> [--interval 45] [--once] [--base URL]   |   --selftest"); process.exit(1); }
   const intervalMs = Number(arg("interval", 45)) * 1000;
   const once = process.argv.includes("--once");

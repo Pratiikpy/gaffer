@@ -8,4 +8,3 @@ export const TXLINE_API = process.env.TXLINE_API || "https://txline-dev.txodds.c
 export const LATCH_PROGRAM = new PublicKey("HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG");
 export const TXORACLE = new PublicKey("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
 export const SUB_MINT = new PublicKey("4Zao8ocPhmMgq7PdsYWyxvqySMGx7xb9cMftPMkEokRG");
-export const DEFAULT_FIXTURE = 17588388;

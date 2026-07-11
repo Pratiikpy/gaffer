@@ -53,7 +53,7 @@ export function loadServerKeypair(): Keypair {
 }
 
 /** Constant-time compare that never leaks length through `timingSafeEqual`'s own throw. */
-function secretEq(got: string, want: string): boolean {
+export function secretEq(got: string, want: string): boolean {
   if (!want) return false;
   const a = Buffer.from(got), b = Buffer.from(want);
   if (a.length !== b.length) return false;

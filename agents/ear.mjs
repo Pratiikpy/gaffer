@@ -149,7 +149,8 @@ async function tick(fixtures, state) {
       // Commit the call on-chain the moment it's made — the timestamp cannot be back-dated. Authenticated,
       // so only the agent (never an anonymous POST) can write a call that shows in the app as genuine.
       const headers = { "content-type": "application/json" };
-      if (process.env.GAFFER_ADMIN_KEY) headers["x-gaffer-key"] = process.env.GAFFER_ADMIN_KEY;
+      if (process.env.EAR_COMMIT_SECRET) headers["x-ear-key"] = process.env.EAR_COMMIT_SECRET;
+      else if (process.env.GAFFER_ADMIN_KEY) headers["x-gaffer-key"] = process.env.GAFFER_ADMIN_KEY;
       const commit = await fetch(`${BASE}/api/commit-ear`, {
         method: "POST", headers,
         body: JSON.stringify({ fixtureId: f, kind: ev.kind, side: ev.side, team: teamName(ev.side, nm), confidence: ev.confidence, evidence: ev.evidence }),

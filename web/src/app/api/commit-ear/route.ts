@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { createHash } from "node:crypto";
-import { loadServerKeypair, adminOk } from "@/lib/serverConfig";
+import { loadServerKeypair, adminOk, secretEq } from "@/lib/serverConfig";
 import { RPC } from "@/lib/config";
 import { db } from "@/lib/db";
 
@@ -39,8 +39,10 @@ function rateOk(fixtureId: number): string | null {
 export async function POST(req: NextRequest) {
   try {
     // Only the agent may write a call — an anonymous POST must not appear in the app as a genuine Ear call
-    // (nor spend the shared wallet). Open only on a local dev server (ALLOW_OPEN_ADMIN), never in prod.
-    if (!adminOk(req)) return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+    // (nor spend the shared wallet). The Ear agent carries its own dedicated secret (EAR_COMMIT_SECRET,
+    // set on the deployed agent host and in prod env); adminOk also passes, which covers a local dev server.
+    const earOk = secretEq(req.headers.get("x-ear-key") || "", process.env.EAR_COMMIT_SECRET || "");
+    if (!earOk && !adminOk(req)) return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
 
     const b = await req.json().catch(() => ({}));
     const fixtureId = Number(b?.fixtureId) || 0;

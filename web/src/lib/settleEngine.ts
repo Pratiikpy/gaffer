@@ -118,7 +118,12 @@ export async function settleMarket(program: any, market: string): Promise<Settle
   if (paidYes) {
     const matchTs = Number(bundle.summary.updateStats.maxTimestamp) || 0;
     await recordSettle(market, fixtureId, matchTs, Math.max(0, Date.now() - matchTs)).catch(() => {});
-    await settleDuelsForMarket(market, 1).catch(() => {});   // S6 — every Fade Duel settles off the result
+    // S6 — every Fade Duel settles off the result. Non-fatal (the on-chain payout already landed and must
+    // not flip), but a TOTAL failure here (e.g. the DB briefly down) would otherwise strand every duel on
+    // this market at 'live' forever with no trace, since the keeper never revisits a settled market. Log it
+    // loudly so a stuck H2H ledger is discoverable and can be re-settled, instead of vanishing.
+    await settleDuelsForMarket(market, 1).catch((e) =>
+      console.error(`[settle] fade-duel settle failed market=${market} side=YES — duels left 'live': ${e?.message || e}`));
   }
   return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidYes ? "YES" : "VOID" };
 }
@@ -176,7 +181,8 @@ export async function settleMarketNo(program: any, market: string): Promise<Sett
   // Settled on-chain; bookkeeping below is best-effort and must not flip the result (see settleMarket).
   // Same honesty as the YES path: with nobody on NO the kernel voids and refunds instead of paying.
   const paidNo = (await readSettledStatus(program, marketPk)) === 3;
-  if (paidNo) await settleDuelsForMarket(market, 2).catch(() => {});
+  if (paidNo) await settleDuelsForMarket(market, 2).catch((e) =>
+    console.error(`[settle] fade-duel settle failed market=${market} side=NO — duels left 'live': ${e?.message || e}`));
   return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidNo ? "NO" : "VOID" };
 }
 

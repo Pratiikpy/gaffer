@@ -5,7 +5,10 @@ import { rememberFixtures } from "@/lib/fixtureNames";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MATCH_MS = 2.5 * 3600_000; // a match + stoppage/HT window
+// A knockout can run 90' + HT + 30' extra time + penalties, which pushes well past two hours from kickoff.
+// 3.25h keeps a fixture "live" for the whole of that worst case, so the worker never kills a match's agents
+// (losing a locked CLV entry / Arena pick) or enqueues settlement while the ball is still in play.
+const MATCH_MS = 3.25 * 3600_000;
 let cache: { at: number; v: any[] } | null = null;
 
 /** Today's real match schedule from TxLINE, normalized with a live/soon/upcoming/finished state so the

@@ -1201,7 +1201,15 @@ function KnockoutBoard({ fixtures, onSelect }: { fixtures: any[]; onSelect: (id:
  * way. Never a fabricated number — the band is a plain function of the live implied %. */
 function DramaMeter({ fixtureId }: { fixtureId: number }) {
   const [o, setO] = useState<any>(null);
-  useEffect(() => { let live = true; fetch(`/api/odds/${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setO(d); }).catch(() => {}); return () => { live = false; }; }, [fixtureId]);
+  // Poll so the band actually "rides the swings" as the copy promises — a one-shot fetch would freeze the
+  // meter mid-match and contradict its own "live market" label.
+  useEffect(() => {
+    let live = true;
+    const read = () => fetch(`/api/odds/${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setO(d); }).catch(() => {});
+    read();
+    const t = POLL ? setInterval(read, 15_000) : null;
+    return () => { live = false; if (t) clearInterval(t); };
+  }, [fixtureId]);
   if (!o || !o.hasOdds) return null;
   const gap = Math.abs((o.home || 0) - (o.away || 0));
   const band = gap <= 8 ? { t: "GOING TO THE WIRE", c: "#dc2626", w: 92 } : gap <= 18 ? { t: "WOBBLING", c: "#f59e0b", w: 68 } : gap <= 30 ? { t: "IN THE BALANCE", c: "#059669", w: 46 } : { t: "CRUISING", c: "#6b7280", w: 24 };
@@ -2992,7 +3000,7 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
               </div>
               <div className="text-[11px] text-white/55 leading-snug mt-0.5">{c.evidence}</div>
             </div>
-            {c.sig && <a href={`https://explorer.solana.com/tx/${c.sig}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="mono text-[9px] text-[var(--greenb)] shrink-0 mt-0.5 whitespace-nowrap">proof ↗</a>}
+            {c.sig && <a href={`https://explorer.solana.com/tx/${c.sig}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="mono text-[9px] text-[var(--greenb)] shrink-0 mt-0.5 whitespace-nowrap">receipt ↗</a>}
           </div>
         ))}
       </div>
@@ -3700,9 +3708,9 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
           <span className="text-[15px] font-bold">House cut today</span>
           <span className="text-2xl font-extrabold text-[var(--green)]">{rake === 0 ? "0%" : `${(rake / 100).toFixed(2)}%`}</span>
         </div>
-        <p className="text-[13px] text-[var(--muted)] mt-2 leading-relaxed">Right now we take nothing — the entire pot goes to the people who called it right. When we do switch on a cut, it&apos;s a small rake on <b className="text-[var(--ink)]">winnings only</b> (never your stake back), hard-capped at <b className="text-[var(--ink)]">{cap}%</b> in the rules themselves — a ceiling no one can raise. Same instant, un-clawback payout, whether the cut is on or off.</p>
+        <p className="text-[13px] text-[var(--muted)] mt-2 leading-relaxed">Right now we take nothing — the entire pot goes to the people who called it right. If we ever switch on a cut, it&apos;s a small rake taken <b className="text-[var(--ink)]">only when you win</b> — a lost call and a refund are never touched — hard-capped at <b className="text-[var(--ink)]">{cap}%</b> in the rules themselves, a ceiling no one can raise. Same instant, un-clawback payout, cut on or off.</p>
         <div className="grid grid-cols-3 gap-2 mt-4">
-          {[["Rake", "on winnings, 0–" + cap + "%"], ["Power plays", "premium slips & boosts"], ["Squads", "private leagues"]].map(([h, s]) => (
+          {[["Rake", "on wins only, 0–" + cap + "%"], ["Power plays", "premium slips & boosts"], ["Squads", "private leagues"]].map(([h, s]) => (
             <div key={h} className="rounded-xl bg-[#FAFAF7] border border-[var(--line)] p-3"><div className="text-[12px] font-bold">{h}</div><div className="mono text-[9px] text-[var(--muted)] mt-1 leading-tight">{s}</div></div>
           ))}
         </div>

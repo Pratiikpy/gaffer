@@ -192,15 +192,6 @@ class TxlineServer {
     } catch { return []; }
   }
 
-  /** Latest event per action type for a fixture — a fast way to read the current scoreline without
-   * parsing the whole historical stream (38 entries for a finished match). */
-  async scoresSnapshot(fixtureId: number): Promise<any[]> {
-    try {
-      const v = await this.withToken(async () => (await this.http.get(`/api/scores/snapshot/${fixtureId}`)).data);
-      return Array.isArray(v) ? v : (Array.isArray(v?.events) ? v.events : (Array.isArray(v?.data) ? v.data : []));
-    } catch { return []; }
-  }
-
   /** A proof bundle for one (fixture, seq, stat).
    *
    * Only HITS are remembered. An anchored proof is immutable, so holding it forever is free and saves a

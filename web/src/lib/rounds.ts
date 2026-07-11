@@ -12,6 +12,7 @@ import { pushSquad } from "./push";
 import { cached } from "./cache";
 
 const LOCK_MS = 20_000;      // 20s judge-grace window to call before entry locks (KILL-1 discipline)
+const VOID_GRACE_MS = 75_000; // after settles_at, how long to wait for a readable score before voiding the round
 const FREEZE_MS = 45_000;    // review window: 20s to call, then ~25s of sweat (real reviews avg 3m12s;
 const BLACKOUT_MS = 40_000;  // compressed here so a demo/round resolves in view)
 const AUTO_FRESH_MS = 45_000; // a real match event only auto-triggers a Freeze if it landed this recently
@@ -133,9 +134,19 @@ export async function settleRound(roundId: string): Promise<RoundView | null> {
   const r = rows[0];
   if (r.state === "settled") return getRound(roundId);
   // If the score can't be read right now (feed error, or no stats event yet), do NOT grade — that would
-  // settle the whole room off a phantom 0–0. Leave the round open; the next poll past `settles_at` retries.
+  // settle the whole room off a phantom 0–0. But a flash round can't "sweat" forever either: on the dev
+  // feed the score stream stays empty until full-time, so a window opened mid-match would never resolve on
+  // screen. Once we're well past the settle time with still no readable result, VOID it — a clean, honest
+  // "called off" with no result invented and no points won or lost — instead of hanging. Within the grace,
+  // leave it open and retry on the next poll (a finished/relived match fills the feed and grades normally).
   const goals = await currentGoals(Number(r.fixture_id));
-  if (!goals) return getRound(roundId);
+  if (!goals) {
+    if (Date.now() > Number(r.settles_at) + VOID_GRACE_MS) {
+      await db()`UPDATE rounds SET state = 'settled', outcome = 'VOID', lore = ${"Called off — the feed went quiet. No one wins or loses; every stake is safe."} WHERE id = ${roundId} AND state != 'settled'`;
+      await db()`UPDATE round_calls SET correct = NULL WHERE round_id = ${roundId}`;
+    }
+    return getRound(roundId);
+  }
   const { total, g1, g2 } = goals;
   let outcome: string, lore: string;
   if (r.kind === "freeze") {
@@ -249,9 +260,19 @@ export const SILENCE_MS = 30_000;
 
 /** Per-fixture watch: the last odds message we saw, and when it first appeared. The feed carries no
  * reliable wall-clock on each row, so silence is measured by the message SEQUENCE going still — the
- * one signal that can't be faked by a slow response or a clock skew. */
-const oddsWatch = new Map<number, { messageId: string; since: number }>();
+ * one signal that can't be faked by a slow response or a clock skew.
+ *
+ * This MUST persist across requests: on Vercel each poll can land on a different, cold serverless instance,
+ * and an in-memory Map would reset `since` to now every time → silence never accumulates → the Blackout and
+ * the Ear's stoppage call would be dead in production. So the watch lives in Postgres. We only WRITE when the
+ * market actually speaks (a new MessageId), so a quiet match is all cheap reads. */
 const blackoutCheck = new Map<string, number>();
+let oddsWatchReady = false;
+async function ensureOddsWatch(): Promise<void> {
+  if (oddsWatchReady) return;
+  await db()`CREATE TABLE IF NOT EXISTS odds_watch (fixture_id bigint PRIMARY KEY, message_id text NOT NULL, since bigint NOT NULL)`;
+  oddsWatchReady = true;
+}
 
 /** Read the newest odds MessageId for a fixture, or null when the book is quoting nothing at all. */
 async function latestOddsMessage(fixtureId: number): Promise<string | null> {
@@ -282,12 +303,25 @@ export function computeSilence(
   return { silentMs: now - prev.since, next: prev };
 }
 
-/** How long this fixture's odds have been still, in ms. 0 when they're moving (or unknown). */
+/** How long this fixture's odds have been still, in ms. 0 when they're moving (or unknown). Backed by
+ * Postgres so the silence clock survives across serverless instances (see `ensureOddsWatch`). */
 export async function oddsSilenceMs(fixtureId: number): Promise<number> {
   const id = await latestOddsMessage(fixtureId);
-  const { silentMs, next } = computeSilence(oddsWatch.get(fixtureId), id, Date.now());
-  if (next) oddsWatch.set(fixtureId, next);
-  return silentMs;
+  if (!id) return 0;                                     // no quote at all — absence is not silence
+  try {
+    await ensureOddsWatch();
+    const rows = await db()`SELECT message_id, since FROM odds_watch WHERE fixture_id = ${fixtureId}`;
+    const prev = (rows as any[])[0] ? { messageId: (rows as any[])[0].message_id as string, since: Number((rows as any[])[0].since) } : undefined;
+    const { silentMs, next } = computeSilence(prev, id, Date.now());
+    // Only write when the market SPOKE (a new/first message id); a still market is pure reads.
+    if (next && (!prev || prev.messageId !== next.messageId)) {
+      await db()`INSERT INTO odds_watch (fixture_id, message_id, since) VALUES (${fixtureId}, ${next.messageId}, ${next.since})
+        ON CONFLICT (fixture_id) DO UPDATE SET message_id = ${next.messageId}, since = ${next.since}`;
+    }
+    return silentMs;
+  } catch {
+    return 0;                                            // DB blip → treat as not-silent, never a false Blackout
+  }
 }
 
 /** Real-time auto-trigger: the market goes quiet for SILENCE_MS during a live match → open a Blackout.
@@ -309,8 +343,8 @@ export async function maybeAutoBlackout(fixtureId: number, squadCode: string | n
   if (silent < SILENCE_MS) return null;
   const recent = await db()`SELECT 1 FROM rounds WHERE fixture_id = ${fixtureId} AND opened_at > ${Date.now() - FREEZE_MS} LIMIT 1`;
   if (recent.length) return null;
-  // Reset the watch so one silence opens exactly one Blackout.
-  oddsWatch.delete(fixtureId);
+  // Reset the watch so one silence opens exactly one Blackout (the next quote restarts the clock anyway).
+  try { await db()`DELETE FROM odds_watch WHERE fixture_id = ${fixtureId}`; } catch { /* best-effort */ }
   return openBlackout(fixtureId, squadCode, "The market has stopped quoting. Nobody knows what just happened.");
 }
 

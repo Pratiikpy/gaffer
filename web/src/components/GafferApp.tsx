@@ -1215,7 +1215,39 @@ function DramaMeter({ fixtureId }: { fixtureId: number }) {
 function MarketRead({ fixtureId, home, away }: { fixtureId: number; home: string; away: string }) {
   const [o, setO] = useState<any>(null);
   const [pick, setPick] = useState<number | null>(null); // 0 home · 1 draw · 2 away — the fan's own read
-  useEffect(() => { setPick(null); let live = true; fetch(`/api/odds/${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setO(d); }).catch(() => {}); return () => { live = false; }; }, [fixtureId]);
+  const [read, setRead] = useState<string>("");          // The Gaffer's Read — AI on a live line move
+  const prev = useRef<{ home: number; draw: number; away: number } | null>(null);
+
+  // Poll the line so the bar moves in real time, and when it lurches (≥6 implied-% points on a side) ask
+  // the AI to explain what a swing that size signals — the consumer-facing side of the deployed explainer
+  // agent. Honest by construction: /api/explain-move reads the market only, never invents an event.
+  useEffect(() => {
+    setPick(null); setRead(""); prev.current = null;
+    let live = true;
+    const read1 = async () => {
+      try {
+        const d = await fetch(`/api/odds/${fixtureId}`).then((r) => r.json());
+        if (!live) return;
+        setO(d);
+        if (d?.hasOdds) {
+          const now = { home: d.home, draw: d.draw, away: d.away };
+          const p = prev.current;
+          if (p) {
+            let side = "", from = 0, to = 0, best = 0;
+            for (const k of ["home", "draw", "away"] as const) { const mv = Math.abs((now[k] ?? 0) - (p[k] ?? 0)); if (mv >= 6 && mv > best) { best = mv; side = k; from = p[k]; to = now[k]; } }
+            if (side) {
+              const r = await fetch(`/api/explain-move`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ home, away, side, from, to }) }).then((x) => x.json()).catch(() => null);
+              if (live && r?.line) setRead(r.line);
+            }
+          }
+          prev.current = now;
+        }
+      } catch { /* transient — try again next tick */ }
+    };
+    read1();
+    const t = POLL ? setInterval(read1, 20_000) : null;
+    return () => { live = false; if (t) clearInterval(t); };
+  }, [fixtureId, home, away]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!o || !o.hasOdds) return null;
   const segs = [{ k: home, v: o.home, c: "var(--green)" }, { k: "Draw", v: o.draw, c: "#9CA3AF" }, { k: away, v: o.away, c: "#f59e0b" }];
   const chosen = pick != null ? segs[pick] : null;
@@ -1235,6 +1267,12 @@ function MarketRead({ fixtureId, home, away }: { fixtureId: number; home: string
       {chosen && (
         <div className={`mt-2.5 rounded-lg px-3 py-2 text-[12px] font-semibold ${chosen.v <= 30 ? "bg-[var(--green)]/10 text-[var(--green)]" : "bg-[#FAFAF7] text-[var(--muted)]"}`}>
           {chosen.v <= 30 ? `You're calling it against the book — only ${chosen.v}% are on ${chosen.k}. Bold.` : `You're with the market — ${chosen.k} at ${chosen.v}%.`}
+        </div>
+      )}
+      {read && (
+        <div className="mt-2.5 rounded-lg px-3 py-2.5 bg-[var(--ink)] text-white">
+          <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] gf-pulse" /><span className="mono text-[9px] tracking-widest uppercase text-[var(--greenb)]">The Gaffer&apos;s Read · live</span></div>
+          <div className="text-[12.5px] font-semibold mt-1 leading-snug">{read}</div>
         </div>
       )}
     </div>

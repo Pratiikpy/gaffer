@@ -32,7 +32,7 @@ const arg = (name, fallback) => {
 };
 const ONCE = process.argv.includes("--once");
 const INTERVAL_MS = Number(arg("interval", 20)) * 1000;
-const BASE = (process.env.BASE || arg("base", "http://127.0.0.1:3001")).replace(/\/$/, "");
+const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3001")).replace(/\/$/, "");
 /** Watch one match instead of the whole chain. On match day this is the difference between paying a
  *  goal out in seconds and sweeping every dead pool ever minted first. */
 const FIXTURE = Number(arg("fixture", process.env.FIXTURE || 0)) || 0;

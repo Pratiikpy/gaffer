@@ -36,5 +36,71 @@ function selftest() {
   process.exit(ok ? 0 : 1);
 }
 
-if (process.argv.includes("--selftest")) selftest();
-else console.log("CLV Tracker · import { clv, summarize } or run with --selftest. Live: entry from a detector signal, close from the last /api/odds before kickoff.");
+// ── live loop ────────────────────────────────────────────────────────────────────────────────────────
+// Entry = the line when tracking begins (or --entry, seeded from a detector signal). Close = the last
+// line before the match goes in-running, which /api/live reports (running flips true at kickoff). CLV is
+// then close − entry for the chosen side: did the market move onto the pick before the whistle?
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
+const BASE = (process.env.GAFFER_API || process.env.BASE || arg("base", "http://127.0.0.1:3000")).replace(/\/$/, "");
+const SIDE = ["home", "draw", "away"].includes(arg("side", "home")) ? arg("side", "home") : "home";
+const SEED_ENTRY = process.argv.includes("--entry") ? Number(arg("entry", "")) : null;
+
+function logLine(entry) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+  try { mkdirSync(resolve(ROOT, "logs"), { recursive: true }); appendFileSync(resolve(ROOT, "logs", `clv-tracker-${new Date().toISOString().slice(0, 10)}.jsonl`), line + "\n"); } catch { /* keep tracking */ }
+  return line;
+}
+
+async function tick(fixtures, state) {
+  for (const f of fixtures) {
+    const st = state[f];
+    if (st.closed) continue;
+    try {
+      const [o, live] = await Promise.all([
+        fetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
+        fetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
+      ]);
+      if (!o?.hasOdds) continue;
+      const line = o[SIDE];
+      if (st.entry == null) { st.entry = SEED_ENTRY ?? line; logLine({ fixture: f, action: "entry", side: SIDE, entry: st.entry }); }
+
+      if (live?.running) {
+        // Kickoff — the close is the last line we saw before the whistle. Finalize CLV.
+        const close = st.lastLine ?? line;
+        const value = clv(st.entry, close);
+        logLine({ fixture: f, action: "close", side: SIDE, entry: st.entry, close, clv: value });
+        console.log(`[CLOSE] fixture ${f} · ${SIDE} entry ${st.entry}% → close ${close}% · CLV ${value >= 0 ? "+" : ""}${value}pt`);
+        st.closed = true;
+      } else {
+        st.lastLine = line;
+        const running = clv(st.entry, line);
+        logLine({ fixture: f, action: "track", side: SIDE, entry: st.entry, line, clv: running });
+        console.log(`[TRACK] fixture ${f} · ${SIDE} ${st.entry}% → ${line}% · running CLV ${running >= 0 ? "+" : ""}${running}pt`);
+      }
+    } catch { /* transient feed error — skip this tick */ }
+  }
+}
+
+async function main() {
+  if (process.argv.includes("--selftest")) return selftest();
+  const fixtures = process.argv.slice(2).map(Number).filter(Boolean);
+  if (!fixtures.length) { console.log("usage: node clv-tracker.mjs <fixtureId…> [--side home|draw|away] [--entry PCT] [--interval 60] [--base URL]   |   --selftest"); process.exit(1); }
+  const intervalMs = Number(arg("interval", 60)) * 1000;
+  const once = process.argv.includes("--once");
+  const state = Object.fromEntries(fixtures.map((f) => [f, { entry: null, lastLine: null, closed: false }]));
+  console.log(`CLV Tracker · ${SIDE} side · watching ${fixtures.join(", ")} to close · every ${intervalMs / 1000}s → logs/clv-tracker-*.jsonl`);
+  await tick(fixtures, state);
+  if (once) return;
+  const timer = setInterval(async () => {
+    await tick(fixtures, state);
+    if (Object.values(state).every((s) => s.closed)) { clearInterval(timer); console.log("all fixtures closed — CLV finalized."); }
+  }, intervalMs);
+}
+
+// Only run when invoked directly, so the pure functions import side-effect-free into the test suite.
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

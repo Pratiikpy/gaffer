@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOk, secretEq } from "@/lib/serverConfig";
-import { listMarkets, listParlays } from "@/lib/kernel";
+import { listMarkets, listParlays, windowedMarketPubkeys } from "@/lib/kernel";
 import { serverProgram, settleMarket, settleMarketNo, voidMarket, settleParlay, RESOLVE_GRACE_SECS } from "@/lib/settleEngine";
 
 export const runtime = "nodejs";
@@ -60,7 +60,11 @@ async function run(req: NextRequest) {
     const markets = only ? allMarkets.filter((m: any) => Number(m.fixtureId) === only) : allMarkets;
     const parlays = only ? allParlays.filter((p: any) => Number(p.fixtureId) === only) : allParlays;
 
-    const settled: any[] = [], voided: any[] = [], slips: any[] = [], skipped: any[] = [];
+    // `skipped` is benign — a predicate the chain can't prove yet (no anchored proof, not expired). `errored`
+    // is a market/slip whose settle attempt THREW (RPC down, a proof the kernel keeps rejecting): a stuck
+    // payout the agents must surface, not a quiet no-op. Keeping them apart is what lets the keeper log shout
+    // on a real failure instead of drowning it in "not provable yet" heartbeats.
+    const settled: any[] = [], voided: any[] = [], slips: any[] = [], skipped: any[] = [], errored: any[] = [];
 
     // Every open pool, every sweep — deliberately NOT gated on `lock_ts`.
     //
@@ -70,8 +74,16 @@ async function run(req: NextRequest) {
     // oracle has anchored a proof, which is exactly what "paid the second it happens" means. Pools on
     // matches that haven't kicked off cost nothing to try: `findProof` finds no events and caches the
     // miss for twenty seconds.
+    // Windowed markets carry a DELTA predicate; the generic settle path below proves the ABSOLUTE stat and
+    // would mis-settle them (fire YES on the absolute count, and there is no NO payout for a delta). Route
+    // them away from this ladder entirely — they settle only through /api/settle-window. On a lookup error
+    // this is an empty set and the ladder proceeds as before: no window market is creatable via any prod
+    // route today, so this is belt-and-braces for the day one is.
+    const windowed = await windowedMarketPubkeys(program).catch(() => new Set<string>());
+
     const openMarkets = markets.filter((m: any) => m.status === 0);
     for (const m of openMarkets) {
+      if (windowed.has(m.pubkey)) { skipped.push({ market: m.pubkey, reason: "windowed — settles via settle-window" }); continue; }
       try {
         // The ladder, in the order the chain allows it.
         //  1. Did it happen?  -> settle, YES takes the pot.
@@ -93,7 +105,7 @@ async function run(req: NextRequest) {
         }
         skipped.push({ market: m.pubkey, reason: r.reason, no: n.reason });
       } catch (e: any) {
-        skipped.push({ market: m.pubkey, reason: (e?.message || String(e)).slice(0, 90) });
+        errored.push({ market: m.pubkey, reason: (e?.message || String(e)).slice(0, 90) });
       }
     }
 
@@ -103,7 +115,7 @@ async function run(req: NextRequest) {
         if (r.settled) slips.push({ parlay: p.pubkey, outcome: r.outcome, sig: r.sig });
         else skipped.push({ parlay: p.pubkey, reason: r.reason });
       } catch (e: any) {
-        skipped.push({ parlay: p.pubkey, reason: (e?.message || String(e)).slice(0, 90) });
+        errored.push({ parlay: p.pubkey, reason: (e?.message || String(e)).slice(0, 90) });
       }
     }
 
@@ -112,7 +124,8 @@ async function run(req: NextRequest) {
       ms: Date.now() - startedAt,
       fixture: only || null,
       swept: { markets: openMarkets.length, parlays: parlays.filter((x: any) => x.status === 0).length },
-      settled, voided, slips, skipped,
+      paid: settled.length + voided.length + slips.length,
+      settled, voided, slips, skipped, errored,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, ms: Date.now() - startedAt, error: (e?.message || String(e)).slice(0, 160) }, { status: 500 });

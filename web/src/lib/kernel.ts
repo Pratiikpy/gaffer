@@ -43,6 +43,22 @@ async function decodeAll(p: any, name: "market" | "parlay"): Promise<{ publicKey
   return out;
 }
 
+/** The set of markets that carry a `MarketWindow` — a delta ("does the score move across this window?")
+ * predicate rather than an absolute one. The generic `settle`/`settle_no` path proves the ABSOLUTE stat,
+ * so it would mis-settle a windowed market; the keeper must route these through settle-window instead.
+ * One `getProgramAccounts` per sweep, parsed by the `market` pubkey at offset 8 (no decode needed). */
+export async function windowedMarketPubkeys(p: any): Promise<Set<string>> {
+  const idlAcc = (idl as any).accounts.find((a: any) => a.name === "MarketWindow");
+  if (!idlAcc) return new Set();
+  const disc = Buffer.from(idlAcc.discriminator);
+  const raws = await p.provider.connection.getProgramAccounts(p.programId, {
+    filters: [{ memcmp: { offset: 0, bytes: utils.bytes.bs58.encode(disc) } }],
+  });
+  const out = new Set<string>();
+  for (const r of raws) if (r.account.data.length >= 40) out.add(new PublicKey(r.account.data.subarray(8, 40)).toBase58());
+  return out;
+}
+
 export interface MarketView {
   pubkey: string;
   marketId: string;

@@ -37,11 +37,12 @@ const fx = (fixtureId: string | number) => FIXTURE_NAMES[String(fixtureId)] || {
 const fxKnown = (fixtureId: string | number) => !!FIXTURE_NAMES[String(fixtureId)];
 const STATWORD = ["", "goal", "goal", "booking", "booking", "red card", "red card", "corner", "corner"];
 // Canonical nations a fan can fly (names match the flag map in /api/nations so standings stay consistent).
+// Names only — every surface renders the drawn flag-icons SVG via <Flag name={...}>, never an emoji.
 const PICK_NATIONS = [
-  { name: "USA", flag: "🇺🇸" }, { name: "Brazil", flag: "🇧🇷" }, { name: "Argentina", flag: "🇦🇷" },
-  { name: "France", flag: "🇫🇷" }, { name: "England", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" }, { name: "Spain", flag: "🇪🇸" },
-  { name: "Mexico", flag: "🇲🇽" }, { name: "Germany", flag: "🇩🇪" }, { name: "Portugal", flag: "🇵🇹" },
-  { name: "Netherlands", flag: "🇳🇱" }, { name: "Morocco", flag: "🇲🇦" }, { name: "Japan", flag: "🇯🇵" },
+  { name: "USA" }, { name: "Brazil" }, { name: "Argentina" },
+  { name: "France" }, { name: "England" }, { name: "Spain" },
+  { name: "Mexico" }, { name: "Germany" }, { name: "Portugal" },
+  { name: "Netherlands" }, { name: "Morocco" }, { name: "Japan" },
 ];
 
 /** Fan-language question for a market — never "goals over 0". Base stat key (mod 1000) picks the
@@ -437,7 +438,7 @@ export default function GafferApp() {
     if (r) {
       setPoints(r.points); setStreak(r.streak); setFreezes(r.freezes);
       if (squadCode) refreshSquad();
-      flash(`Locked: ${side.toUpperCase()} — streak ${r.streak} 🔥`);
+      flash(`Locked: ${side.toUpperCase()} — ${r.streak}-day streak`);
     } else { setFreePicked(false); flash("Couldn't lock your pick", "err"); }
   };
   const fund = async () => {
@@ -2832,24 +2833,40 @@ function Squad({ userId, userName, setName, nation, setNation, squadCode, squadD
 
 // Turn the raw tick stream into a fan-readable timeline: scoreline from the goal-count stats, a match
 // clock from the running clock, and only the moments that matter (goals, cards, corners, big chances).
+type TimelineKind = "goal" | "red" | "yellow" | "corner" | "chance" | "building";
 function buildTimeline(recent: any[], home: string, away: string) {
-  const evs: { min: string; icon: string; text: string; big?: boolean }[] = [];
+  const evs: { min: string; kind: TimelineKind; text: string; big?: boolean }[] = [];
   let pg1 = 0, pg2 = 0, py = 0, pr = 0, pc = 0;
   for (const e of recent) {
     const s = e.Stats || {};
     const g1 = Number(s[1] || 0), g2 = Number(s[2] || 0);
     const yc = Number(s[3] || 0) + Number(s[4] || 0), rc = Number(s[5] || 0) + Number(s[6] || 0), co = Number(s[7] || 0) + Number(s[8] || 0);
     const min = e.Clock?.Seconds != null ? `${Math.floor(Number(e.Clock.Seconds) / 60)}'` : "";
-    if (g1 > pg1) evs.push({ min, icon: "⚽", text: `GOAL — ${home}`, big: true });
-    if (g2 > pg2) evs.push({ min, icon: "⚽", text: `GOAL — ${away}`, big: true });
-    if (rc > pr) evs.push({ min, icon: "🟥", text: "Red card" });
-    if (yc > py) evs.push({ min, icon: "🟨", text: "Booking" });
-    if (co > pc) evs.push({ min, icon: "🚩", text: "Corner" });
-    if (e.Action === "high_danger_possession") evs.push({ min, icon: "🔥", text: "Big chance", big: true });
-    else if (e.Data?.Goal) evs.push({ min, icon: "👀", text: "Goal building" });
+    if (g1 > pg1) evs.push({ min, kind: "goal", text: `GOAL — ${home}`, big: true });
+    if (g2 > pg2) evs.push({ min, kind: "goal", text: `GOAL — ${away}`, big: true });
+    if (rc > pr) evs.push({ min, kind: "red", text: "Red card" });
+    if (yc > py) evs.push({ min, kind: "yellow", text: "Booking" });
+    if (co > pc) evs.push({ min, kind: "corner", text: "Corner" });
+    if (e.Action === "high_danger_possession") evs.push({ min, kind: "chance", text: "Big chance", big: true });
+    else if (e.Data?.Goal) evs.push({ min, kind: "building", text: "Goal building" });
     pg1 = g1; pg2 = g2; py = yc; pr = rc; pc = co;
   }
   return evs.slice(-14).reverse();
+}
+
+/** Drawn timeline markers — never emoji. A card is its coloured rectangle, a goal a filled ball, a
+ *  corner a little flag, a chance a live green dot. Reads instantly, and matches the brand's drawn-asset
+ *  rule (the one place emoji is allowed is banter reactions, not the match feed). */
+function TimelineIcon({ kind }: { kind: TimelineKind }) {
+  if (kind === "red") return <span className="inline-block w-3 h-4 rounded-[2px] bg-[#DC2626]" aria-label="red card" />;
+  if (kind === "yellow") return <span className="inline-block w-3 h-4 rounded-[2px] bg-[#F5B01A]" aria-label="booking" />;
+  if (kind === "corner") return (
+    <svg width="14" height="16" viewBox="0 0 14 16" aria-label="corner" className="shrink-0"><rect x="2" y="1" width="1.5" height="14" rx="0.75" fill="var(--muted)" /><path d="M3.5 2.5 L11 4.5 L3.5 7 Z" fill="var(--green)" /></svg>
+  );
+  if (kind === "goal") return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-label="goal" className="shrink-0"><circle cx="8" cy="8" r="7" fill="var(--ink)" /><circle cx="8" cy="8" r="2.4" fill="#fff" /><circle cx="8" cy="3.4" r="1.1" fill="#fff" opacity="0.85" /><circle cx="12" cy="10" r="1.1" fill="#fff" opacity="0.85" /><circle cx="4" cy="10" r="1.1" fill="#fff" opacity="0.85" /></svg>
+  );
+  return <span className="inline-block w-2.5 h-2.5 rounded-full bg-[var(--green)] gf-pulse" aria-label={kind === "chance" ? "big chance" : "goal building"} />;
 }
 
 // THE GAFFER'S TAKE — an AI pundit reacting to the real match feed, with one-tap voice. Hidden in
@@ -2871,7 +2888,9 @@ function GafferTake({ moment, home, away }: { moment: { kind: string; who: strin
     <div className="mt-4 rounded-2xl p-5 text-white relative overflow-hidden" style={{ background: "linear-gradient(135deg,#211048,#0b0620)" }}>
       <div className="flex items-center justify-between">
         <div className="mono text-[10px] tracking-widest uppercase text-[#c4b5fd]">The Gaffer&apos;s Take</div>
-        {line && <button onClick={speak} aria-label="Speak the take" className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm active:scale-90 transition-transform">🔊</button>}
+        {line && <button onClick={speak} aria-label="Speak the take" className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center active:scale-90 transition-transform">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2.5 4.5 5.5H2v5h2.5L8 13.5z" fill="#fff" /><path d="M11 5.5a3.5 3.5 0 0 1 0 5" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" /></svg>
+        </button>}
       </div>
       <div className="text-[16px] font-bold mt-2 leading-snug min-h-[44px]">{loading ? "…reading the game" : line ? `“${line}”` : ""}</div>
       <div className="mono text-[9px] text-white/40 mt-2">AI pundit · reacting live to the {home} v {away} feed</div>
@@ -3087,7 +3106,7 @@ function Live({ fixtureId, onFreeze, onBlackout, userId, squadCode, userName, po
         {timeline.map((ev, i) => (
           <div key={i} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl ${ev.big ? "bg-[var(--green)]/10" : "bg-white border border-[var(--line)]"}`}>
             <span className="mono text-[11px] font-semibold w-9 text-[var(--muted)]">{ev.min}</span>
-            <span className="text-lg">{ev.icon}</span>
+            <span className="w-6 flex items-center justify-center"><TimelineIcon kind={ev.kind} /></span>
             <span className={`text-sm flex-1 ${ev.big ? "font-bold" : ""}`}>{ev.text}</span>
           </div>
         ))}

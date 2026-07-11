@@ -2,7 +2,7 @@
 
 # ⚽ GAFFER
 
-### The World Cup, turned into a game you play with your mates — and the payout is one no one can refuse.
+### The World Cup prediction game you already play with your mates — now real, and the payout is one no one can refuse.
 
 [![Play it live](https://img.shields.io/badge/▶_Play_it_live-gaffer--cyan.vercel.app-05C46B?style=for-the-badge)](https://gaffer-cyan.vercel.app)
 
@@ -10,7 +10,7 @@
 ![Anchor](https://img.shields.io/badge/Anchor-0.31-1d1d1f)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
 ![TxLINE](https://img.shields.io/badge/TxLINE-live_feed-0EA5E9)
-![Kernel tests](https://img.shields.io/badge/kernel_tests-39%2F39-05C46B)
+![Kernel tests](https://img.shields.io/badge/kernel_tests-38%2F38-05C46B)
 ![Agents](https://img.shields.io/badge/agents-7_live_24%2F7-05C46B)
 ![Settlement](https://img.shields.io/badge/settlement-trustless_CPI-05C46B)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -38,7 +38,7 @@ _Demo filmed live during a World Cup match — linked here on submission._
 
 ## 💡 The idea in 30 seconds
 
-Every sports app makes you a customer of a house that profits when you lose — and the top complaint across the entire category isn't the odds, it's *"they won't pay me."* Trustpilot scores of 1.3–1.9★ sit next to 4.5★ App Store ratings for the same apps. The gap is the whole opportunity.
+Every sports app makes you a customer of a house that profits when you lose — and the top complaint across the entire category isn't the odds, it's *"they won't pay me."* Betting apps routinely carry low-single-digit Trustpilot scores while showing 4★+ on the App Store for the same product — the gap between "looks fine" and "actually pays you." That gap is the whole opportunity.
 
 GAFFER removes the house entirely. Calls go into a **parimutuel pool**: everyone who's right splits the pot in proportion to their stake, and the result itself releases the money — verified against official match data, on-chain, with no operator in the loop who *can* refuse you. You feel it as: *you called it → you got paid → here's the proof.*
 
@@ -63,7 +63,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 3. **Cash → Add funds** — tops up your in-app balance with **free devnet play-coins** (a faucet, not a purchase).
 4. Back a pool (*"USA to score?"*), watch the projected payout move as others take the other side.
 5. **Cash → Your calls → Collect** — the pool settles on the real result and pays you out, with a Proof-of-Payout receipt.
-6. **Live → The Freeze** → the signature synchronized round that opens the minute every sportsbook locks its doors.
+6. **Live → The Frozen Window** → the signature synchronized round that opens the minute every sportsbook locks its doors — on a VAR check (The Freeze) or a market that goes silent mid-move (Blackout).
 
 > **On money:** GAFFER runs today on **valueless devnet play-currency** — it's a free-to-play skill-and-social game, not real-money wagering. The innovation being demonstrated is the *payout technology*: instant, non-custodial, un-clawback, and provable. The path to real-money rails is real, but nothing of value is staked in this build.
 
@@ -94,7 +94,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 
 ## ✅ Proof it works
 
-- **Kernel test suite: 39/39 passing on devnet** — pro-rata payout to the lamport, empty-side→refund, `void()` both-sides refund, `settle_no` (proving a stat *never* crossed its line), parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, the **capped rake** (exact fee split + cap + authority guards), and every settlement-binding negative (fixture/stat/binary/expiry/comparison). Run: `npm run test:kernel`.
+- **Kernel test suite: 38/38 passing on devnet** — pro-rata payout to the lamport, empty-side→VOID refund, the void anti-grief lock (unvoidable until the full 1h grace), `settle_no` (proving a stat *never* crossed its line), parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, the **capped rake** (exact fee split + cap + authority guards), and every settlement-binding negative (fixture/stat/binary/expiry/comparison). Run: `npm run test:kernel`.
 - **Goal → on-chain payout in ~4 seconds — measured against a real World Cup goal.** On USA 2–0 Bosnia, a pool on "USA to score twice" settles the moment the signed data is available: three runs at **3.8 / 4.1 / 4.9 s** from proof to confirmed on-chain payout, the winner paid each time, every settle signature verified on devnet (`err: null`). A live match adds only TxODDS's ~5-min root-anchor cadence on top — their floor, not ours. Run: `cd web && npm run measure:settle`.
 - **The full stake → settle → PAID loop, proven on-chain** — a fresh wallet stakes YES on a finished, anchored fixture, the pool settles permissionlessly on the real TxLINE proof (`provenValue: 2`), and the claim pays out a profit — receipt signature on Explorer.
 - **Seven agents live 24/7** on a DigitalOcean host, discovering fixtures themselves and reading the signed feed — **the Ear** (events inferred from the market, committed on-chain), the keeper, sharp-move detector, market-maker, CLV tracker, arena, and the Read analyst — with kept logs (`agents/`, `deploy/`). The Ear's on-chain proof: a Memo like `GAFFER-EAR|18172379|goal|home|91|…` lands on devnet the instant it calls, verifiable by block time.
@@ -108,7 +108,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 **Kernel + scripts** (`/`, Node + ts-node):
 ```bash
 npm install
-npm run test:kernel     # 39-case devnet suite (needs ~2 devnet SOL on .devnet-key.json)
+npm run test:kernel     # 38-case devnet suite (needs ~2 devnet SOL on .devnet-key.json)
 npm run e2e:kernel      # single-market stake → settle → claim, end to end
 npm run keeper          # autonomous settler loop
 ```

@@ -301,28 +301,42 @@ async function main() {
     await expectErr("T16 join_parlay after lock", "PoolLocked", () => progFor(B).methods.joinParlay(2, new BN(10e6)).accounts({ user: B.publicKey, parlay: p, vault: v, position: pposPda(p, B.publicKey, 2), systemProgram: SystemProgram.programId }).rpc());
   }
 
-  // ───────────────────────── T12-T13: time-gated void() + parlay bust→NO ─────────────────────────
-  sec("T12-T13 · Time-gated: void() refund + parlay bust → NO wins (waiting out the 120s grace)");
+  // ───────────────────────── T12-T13: void anti-grief guard + parlay bust→NO ─────────────────────────
+  sec("T12-T13 · void() stays locked until the 1h RESOLVE_GRACE (anti-grief) + parlay bust → NO wins");
+  // Only T13's parlay resolve needs the wall-clock wait (its grace is VOID_GRACE_SECS = 120s). T12 now
+  // asserts the *guard*: void() must NOT be reachable at expiry+120 — it stays locked until the full
+  // RESOLVE_GRACE_SECS (3600s / 1h). That hour-long lock is a deliberate hardening (a losing YES backer
+  // must not be able to void the pool the instant the short grace lapses and claw its stake back from the
+  // NO winners), so testing the *lock* is the property that matters; the void refund mechanics themselves
+  // are already covered by T8's empty-side → VOID refund. The success path is only reachable after a real
+  // hour, which no wall-clock suite can (or should) sit through.
   const waitUntil = Math.max(tVoidExpiry, tBustExpiry) + GRACE + 8;
   const remain = waitUntil - nowSec();
   if (remain > 0) { console.log(`  …waiting ${remain}s for expiry + ${GRACE}s grace`); await sleep(remain * 1000); }
-  { // T12 void refund
-    await progA.methods.void().accounts({ cranker: A.publicKey, market: tVoid }).rpc();
+  // Devnet's Clock sysvar can lag wall-clock by tens of seconds, so a grace-gated call can still see
+  // NotExpired just after the wall-clock wait. Retry until the chain's own clock agrees it's past grace.
+  const retryClockLag = async (label: string, fn: () => Promise<any>) => {
+    for (let i = 0; ; i++) {
+      try { return await fn(); }
+      catch (e: any) {
+        if (i < 12 && String(e?.message || e).includes("NotExpired")) { console.log(`  …${label}: chain clock still behind grace, waiting 10s`); await sleep(10_000); continue; }
+        throw e;
+      }
+    }
+  };
+  { // T12 — the anti-grief lock: past the 120s VOID_GRACE but nowhere near the 1h RESOLVE_GRACE, void() is
+    // still rejected, so a griefing YES backer cannot void the moment the short grace lapses.
+    await expectErr("T12 void() past 120s but before the 1h RESOLVE_GRACE stays locked", "NotExpired",
+      () => progA.methods.void().accounts({ cranker: A.publicKey, market: tVoid }).rpc());
     const mk = await progA.account.market.fetch(tVoid);
-    assert(mk.status === 2, "void() after expiry+grace → status VOID (2)");
-    const vb = await bal(tVoidVault);
-    await progA.methods.claim().accounts({ owner: A.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, A.publicKey, 1), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
-    assert(vb - (await bal(tVoidVault)) === 0.02e9, "A reclaims its 0.02 stake on void");
-    const vb2 = await bal(tVoidVault);
-    await progFor(B).methods.claim().accounts({ owner: B.publicKey, market: tVoid, vault: tVoidVault, position: posPda(tVoid, B.publicKey, 2), config: configPda, feeRecipient: A.publicKey, systemProgram: SystemProgram.programId }).rpc();
-    assert(vb2 - (await bal(tVoidVault)) === 0.02e9, "B reclaims its 0.02 stake on void (both sides refunded)");
+    assert(mk.status === 0, "market still OPEN — void did not fire before its full grace");
   }
   { // T13 parlay bust → NO (partial: leg0 was proven, leg1 never) — also tests void/settle grace race fix
     await expectErr("T13 settle a leg AFTER expiry+grace still allowed only if ts<=expiry (resolve wins)", "AlreadyClaimed", async () => {
       // leg0 already hit at setup; trying to re-settle leg0 must fail (AlreadyClaimed) — sanity that legs can't double-count
       await progA.methods.settleLeg(0, new BN(ga.seedTs), ga.fixtureSummary, ga.subTree, ga.mainTree, ga.statA, null, null).accounts({ settler: A.publicKey, parlay: tBust, dailyScoresMerkleRoots: dsrPda(ga.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
     });
-    await progA.methods.resolveParlay().accounts({ cranker: A.publicKey, parlay: tBust }).rpc();
+    await retryClockLag("resolve_parlay", () => progA.methods.resolveParlay().accounts({ cranker: A.publicKey, parlay: tBust }).rpc());
     const pk = await progA.account.parlay.fetch(tBust);
     assert(pk.status === 3, "resolve_parlay (not all legs hit) → STATUS_PARLAY_NO (3)");
     const vb = await bal(tBustVault);

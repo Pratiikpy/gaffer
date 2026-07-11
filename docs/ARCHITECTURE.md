@@ -50,6 +50,6 @@ Points are an idempotent event ledger (`points_events`); a user's total is `SUM(
 
 ## Test & verification
 
-- `npm run test:kernel` — 32-case devnet suite: pro-rata payout to the lamport, empty-side→VOID refund, `void()` both-sides refund, parlay YES sweep, parlay bust→NO, `lock_ts` late-call rejection, and every settlement-binding negative.
+- `npm run test:kernel` — 38-case devnet suite: pro-rata payout to the lamport, empty-side→VOID refund, the void anti-grief lock, parlay YES sweep, parlay bust→NO, `lock_ts` late-call rejection, and every settlement-binding negative.
 - `npm run e2e:kernel` / `e2e:parlay` — full stake→settle→claim, single-market and parlay.
 - `npm run keeper` — the autonomous settler.

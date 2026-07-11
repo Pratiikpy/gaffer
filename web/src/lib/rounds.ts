@@ -52,16 +52,25 @@ function roomOf(r: any, now: number, realTally: Record<string, number>): { prese
   return { presence: ambient + realCount, roomTally };
 }
 
-/** Total goals on the board right now (Stats keys 1 + 2 across the latest event). Cached briefly so
- * opening/settling a round doesn't pay the full historical-stream fetch every time. */
-async function currentGoals(fixtureId: number): Promise<{ total: number; g1: number; g2: number }> {
+/** Total goals on the board right now (Stats keys 1 + 2). Cached briefly so opening/settling a round
+ * doesn't pay the full historical-stream fetch every time.
+ *
+ * Most events carry no `Stats` block at all (status rows, clock ticks, disconnects), so the score must be
+ * read off the newest event that actually has one — reading the *last* event returns 0–0 whenever the feed
+ * ends on a statless row, which then settles a Frozen Window `NO GOAL` and a Freeze `OVERTURNED` on a
+ * match that was 2–1, paying the wrong callers. This is the same walk-back `live.ts` does for exactly this
+ * reason; the two must not diverge. `null` (feed error, or genuinely no stats yet) is returned as such so
+ * the caller can refuse to settle rather than grade a real match as goalless. */
+async function currentGoals(fixtureId: number): Promise<{ total: number; g1: number; g2: number } | null> {
   // Single-flighted: a whole squad settling the same round must not each fetch the stream.
   return cached(`goals:${fixtureId}`, { ttlMs: 20_000, swrMs: 60_000, staleMs: 120_000 }, async () => {
     const evs = await txline().historicalEvents(fixtureId);
-    const last = evs[evs.length - 1];
-    const g1 = Number(last?.Stats?.[1] || 0), g2 = Number(last?.Stats?.[2] || 0);
+    const bySeq = [...evs].sort((a: any, b: any) => Number(a.Seq ?? a.seq ?? 0) - Number(b.Seq ?? b.seq ?? 0));
+    const withStats = [...bySeq].reverse().find((e: any) => e?.Stats && e.Stats["1"] != null);
+    if (!withStats) return null;
+    const g1 = Number(withStats.Stats["1"] ?? 0), g2 = Number(withStats.Stats["2"] ?? 0);
     return { total: g1 + g2, g1, g2 };
-  }).catch(() => ({ total: 0, g1: 0, g2: 0 }));
+  }).catch(() => null);
 }
 
 /** The crowd's belief for the leading side, from the live consensus 1X2 line — the sweat strip's number.
@@ -84,7 +93,8 @@ async function readSweatPct(fixtureId: number): Promise<number | null> {
 export async function openFreeze(fixtureId: number, squadCode: string | null, underReview = true, note = ""): Promise<RoundView> {
   // Fetch the (possibly slow) match data FIRST, then stamp the clock — otherwise the lock timestamp is
   // already in the past by the time the round is written.
-  const { total, g1 } = await currentGoals(fixtureId);
+  const goals = await currentGoals(fixtureId);
+  const total = goals?.total ?? 0, g1 = goals?.g1 ?? 0;
   const seed = await sweatPct(fixtureId);
   const baseline = underReview ? Math.max(0, total - 1) : total;
   const id = rid();
@@ -100,7 +110,8 @@ export async function openFreeze(fixtureId: number, squadCode: string | null, un
 
 /** Open a BLACKOUT round — the market just went quiet. Baseline is the per-team goal count at open. */
 export async function openBlackout(fixtureId: number, squadCode: string | null, note = ""): Promise<RoundView> {
-  const { g1, g2 } = await currentGoals(fixtureId);
+  const goals = await currentGoals(fixtureId);
+  const g1 = goals?.g1 ?? 0, g2 = goals?.g2 ?? 0;
   const id = rid();
   const now = Date.now();
   // baseline packs both teams: g1*100 + g2 (each < 100 for a match) so settle can diff each side.
@@ -132,7 +143,11 @@ export async function settleRound(roundId: string): Promise<RoundView | null> {
   if (rows.length === 0) return null;
   const r = rows[0];
   if (r.state === "settled") return getRound(roundId);
-  const { total, g1, g2 } = await currentGoals(Number(r.fixture_id));
+  // If the score can't be read right now (feed error, or no stats event yet), do NOT grade — that would
+  // settle the whole room off a phantom 0–0. Leave the round open; the next poll past `settles_at` retries.
+  const goals = await currentGoals(Number(r.fixture_id));
+  if (!goals) return getRound(roundId);
+  const { total, g1, g2 } = goals;
   let outcome: string, lore: string;
   if (r.kind === "freeze") {
     const stands = total > Number(r.baseline);

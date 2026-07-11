@@ -38,7 +38,11 @@ class TxlineServer {
    * picks up the token the last one minted, and we only mint again when the old one stops working. */
   private async ensure(): Promise<void> {
     if (this.apiToken) return;
-    if (!this.ready) this.ready = this.acquireToken();
+    // The in-flight promise is shared so a burst of first requests mints one token, not many. But it must
+    // be CLEARED on rejection: a single cold-start blip (RPC/feed down for a moment) otherwise caches a
+    // rejected promise here, and every later call re-throws that stale error for the lambda's whole life,
+    // long after TxLINE recovered. On failure the next caller gets a fresh attempt.
+    if (!this.ready) this.ready = this.acquireToken().catch((e) => { this.ready = null; throw e; });
     await this.ready;
   }
 

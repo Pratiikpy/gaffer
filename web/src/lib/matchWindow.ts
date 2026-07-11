@@ -34,12 +34,22 @@ async function readMatchEnd(fixtureId: number): Promise<number | null> {
     if (startMs > 0) return Math.floor(startMs / 1000) + MATCH_LENGTH_SECS;
   } catch { /* fall through to the feed */ }
 
-  // A match the schedule has forgotten: the last thing the feed said about it.
+  // A match the schedule has forgotten — or a schedule that is momentarily down (both look like an empty
+  // snapshot). Fall back to the feed, but ONLY for a match the feed says is FINISHED: the last event's
+  // timestamp is the final whistle then. For a live match that same timestamp is the current minute, so
+  // taking it as "match end" would expire a pool mid-game. A running match with no schedule row is
+  // reported as unknown, and `expiryForFixture` gives it a safe long window instead of a mid-match one.
   try {
     const events: any[] = await txline().historicalEvents(fixtureId);
-    const last = [...events].reverse().find((e) => Number(e?.Ts ?? e?.ts) > 0);
-    const ts = Number(last?.Ts ?? last?.ts ?? 0);
-    if (ts > 0) return Math.floor(ts / 1000);
+    if (events.length) {
+      const bySeq = [...events].sort((a, b) => Number(a.Seq ?? a.seq ?? 0) - Number(b.Seq ?? b.seq ?? 0));
+      const finished = bySeq.some((e) => e.Action === "game_finalised") || Number(bySeq[bySeq.length - 1]?.StatusId) === 100;
+      if (finished) {
+        const last = [...bySeq].reverse().find((e) => Number(e?.Ts ?? e?.ts) > 0);
+        const ts = Number(last?.Ts ?? last?.ts ?? 0);
+        if (ts > 0) return Math.floor(ts / 1000);
+      }
+    }
   } catch { /* nothing to say */ }
 
   return null;

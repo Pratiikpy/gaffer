@@ -59,11 +59,16 @@ export async function listDuels(squadCode: string, userId?: string): Promise<Due
 export async function settleDuelsForMarket(market: string, winningSide: number): Promise<number> {
   const rows = await db()`SELECT * FROM duels WHERE market = ${market} AND status = 'live'`;
   let n = 0;
+  // Per-row guard: one bad row must not throw the whole loop and orphan every other duel on the market.
+  // Nothing retries this — the keeper never revisits a market once its pool is settled on-chain — so a
+  // failure here is permanent. Settle what we can; a stuck row stays 'live' rather than taking the rest down.
   for (const r of rows as any[]) {
-    const d = row2duel(r);
-    const winner = winningSide === 0 ? "void" : d.a.side === winningSide ? d.a.userId : d.b.side === winningSide ? d.b.userId : "void";
-    await db()`UPDATE duels SET status = 'settled', winner = ${winner} WHERE id = ${d.id} AND status = 'live'`;
-    n++;
+    try {
+      const d = row2duel(r);
+      const winner = winningSide === 0 ? "void" : d.a.side === winningSide ? d.a.userId : d.b.side === winningSide ? d.b.userId : "void";
+      await db()`UPDATE duels SET status = 'settled', winner = ${winner} WHERE id = ${d.id} AND status = 'live'`;
+      n++;
+    } catch { /* leave this duel live; settling the others matters more than failing atomically */ }
   }
   return n;
 }

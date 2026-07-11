@@ -125,7 +125,17 @@ export async function compileMarket(args: {
   // The veto. `settle` proves `value > threshold`, so a predicate already over the line is true the
   // instant it is minted, and the pot belongs to whoever gets in first. The model was never told the
   // score, and this is why it does not need to be.
-  const current = await args.currentValueFor(p.statKey);
+  //
+  // Fail CLOSED. `null` means the feed answered and the match has no value yet (not started) — safe, the
+  // predicate cannot already be true. A THROW means we could not read the score at all, and skipping the
+  // veto on a blind read is exactly how an already-true pool gets minted during a feed blip. If we can't
+  // check, we don't open.
+  let current: number | null;
+  try {
+    current = await args.currentValueFor(p.statKey);
+  } catch {
+    return { ok: false, reason: "Couldn't check the match just now — try again in a moment." };
+  }
   if (current !== null && isAlreadyTrue(current, p.threshold)) {
     return { ok: false, reason: "That's already happened — ask for something still to come." };
   }

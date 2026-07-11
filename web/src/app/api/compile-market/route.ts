@@ -62,7 +62,10 @@ export async function POST(req: NextRequest) {
       text,
       home: n.home,
       away: n.away,
-      currentValueFor: (statKey) => currentStat(fixtureId, statKey).catch(() => null),
+      // Let a genuine feed failure THROW — compileMarket fails the already-true veto closed on a throw.
+      // Swallowing it to null here would read a feed blip as "match not started" and let an already-true
+      // pool be minted. currentStat still returns null for the real no-data case (match not started).
+      currentValueFor: (statKey) => currentStat(fixtureId, statKey),
     });
 
     if (!result.ok) return NextResponse.json(result);

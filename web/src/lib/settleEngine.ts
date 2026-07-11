@@ -96,30 +96,46 @@ export async function settleMarket(program: any, market: string): Promise<Settle
   if (!bundle) return { settled: false, reason: "no anchored proof yet" };
 
   const seedTs = Number(bundle.summary.updateStats.minTimestamp);
+  let sig: string;
   try {
-    const sig = await program.methods
+    sig = await program.methods
       .settle(new BN(seedTs), summaryOf(bundle), bundle.subTreeProof.map(node), bundle.mainTreeProof.map(node), termOf(bundle), null, null)
       .accounts({ settler: kp.publicKey, market: marketPk, dailyScoresMerkleRoots: dsrFor(seedTs), txoracleProgram: TXORACLE })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })]).rpc();
-
-    // A true predicate does not always mean a YES payout. If nobody was on YES the kernel voids and
-    // refunds both sides (C3) rather than trapping the pot in an unclaimable state — so read the status
-    // the chain actually wrote instead of assuming the happy path. Reporting "YES" on a voided market
-    // would put a lie in the keeper's log, and would settle every Fade Duel on it the wrong way.
-    const after: any = await program.account.market.fetch(marketPk);
-    const paidYes = after.status === 1;
-
-    if (paidYes) {
-      // C1 — how fast we paid, measured from the proof's own last match timestamp (not a guess).
-      const matchTs = Number(bundle.summary.updateStats.maxTimestamp) || 0;
-      await recordSettle(market, fixtureId, matchTs, Math.max(0, Date.now() - matchTs)).catch(() => {});
-      // S6 — every Fade Duel on this pool settles off the pool's own result.
-      await settleDuelsForMarket(market, 1).catch(() => {});
-    }
-    return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidYes ? "YES" : "VOID" };
   } catch (e: any) {
     return { settled: false, reason: prettyErr(e, "neutral"), code: e.error?.errorCode?.code || "" };
   }
+
+  // The settle transaction has landed — the market is now settled on-chain and no later sweep will touch
+  // it again (it returns "not open" above). So everything below is bookkeeping that must run now, and a
+  // failure here must NOT report the settle as failed: that once put the `after`-fetch inside the try, so
+  // a transient RPC hiccup after a real settle returned {settled:false}, and the duel ledger and the
+  // latency record were then orphaned forever. Bookkeeping is best-effort and never flips the result.
+  //
+  // A true predicate does not always mean a YES payout: with nobody on YES the kernel voids and refunds
+  // (C3), so read the status the chain actually wrote rather than assume the happy path.
+  const paidYes = (await readSettledStatus(program, marketPk)) === 1;
+  if (paidYes) {
+    const matchTs = Number(bundle.summary.updateStats.maxTimestamp) || 0;
+    await recordSettle(market, fixtureId, matchTs, Math.max(0, Date.now() - matchTs)).catch(() => {});
+    await settleDuelsForMarket(market, 1).catch(() => {});   // S6 — every Fade Duel settles off the result
+  }
+  return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidYes ? "YES" : "VOID" };
+}
+
+/** The status the chain wrote for a just-settled market, retrying a couple of times because the read can
+ * race the confirmation. Returns `null` only if the chain truly won't answer — the caller then skips the
+ * paid-side bookkeeping rather than inventing a payout. (1 = YES, 2 = VOID, 3 = NO.) */
+async function readSettledStatus(program: any, marketPk: PublicKey): Promise<number | null> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const m: any = await program.account.market.fetch(marketPk);
+      return Number(m.status);
+    } catch {
+      if (i < 2) await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  return null;
 }
 
 /** Settle a market AGAINST its predicate: prove it never happened, and pay the NO side.
@@ -145,20 +161,21 @@ export async function settleMarketNo(program: any, market: string): Promise<Sett
   if (!bundle) return { settled: false, reason: "no anchored proof from after the close yet" };
 
   const seedTs = Number(bundle.summary.updateStats.minTimestamp);
+  let sig: string;
   try {
-    const sig = await program.methods
+    sig = await program.methods
       .settleNo(new BN(seedTs), summaryOf(bundle), bundle.subTreeProof.map(node), bundle.mainTreeProof.map(node), termOf(bundle))
       .accounts({ settler: kp.publicKey, market: marketPk, dailyScoresMerkleRoots: dsrFor(seedTs), txoracleProgram: TXORACLE })
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })]).rpc();
-
-    // Same honesty as the YES path: with nobody on NO the kernel voids and refunds instead of paying.
-    const after: any = await program.account.market.fetch(marketPk);
-    const paidNo = after.status === 3;
-    if (paidNo) await settleDuelsForMarket(market, 2).catch(() => {});
-    return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidNo ? "NO" : "VOID" };
   } catch (e: any) {
     return { settled: false, reason: prettyErr(e, "neutral"), code: e.error?.errorCode?.code || "" };
   }
+
+  // Settled on-chain; bookkeeping below is best-effort and must not flip the result (see settleMarket).
+  // Same honesty as the YES path: with nobody on NO the kernel voids and refunds instead of paying.
+  const paidNo = (await readSettledStatus(program, marketPk)) === 3;
+  if (paidNo) await settleDuelsForMarket(market, 2).catch(() => {});
+  return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidNo ? "NO" : "VOID" };
 }
 
 /** The newest anchored proof whose snapshot sits at or after `afterSecs`. Newest-first: the final

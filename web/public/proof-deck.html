@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GAFFER · proof deck</title>
+<meta name="theme-color" content="#0b0b0d">
+<meta name="description" content="GAFFER — the World Cup turned into a game with no house, settled trustlessly on Solana. Every feature working, with its real outcome and on-chain receipts.">
+<meta property="og:title" content="GAFFER · proof deck">
+<meta property="og:description" content="Call it, get paid the second it happens. The whole product — three tracks — verifiable in one scroll.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gaffer-cyan.vercel.app/proof-deck.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:light;
+  --ink:#0b0b0d; --fg:#0b0b0d; --muted:#5b6167; --bg:#f3f2ec; --card:#fff;
+  --line:rgba(11,11,13,.10); --green:#05c46b; --greenb:#0e9f5b; --gd:#08130d;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:"Outfit",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.page{max-width:1120px;margin:0 auto;padding:40px 28px 110px}
+.topline{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 16px;font:600 11px/1.5 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:#6b7280}
+.topline .live{color:var(--greenb);display:flex;align-items:center;gap:7px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(5,196,107,.5);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(5,196,107,.5)}70%{box-shadow:0 0 0 8px rgba(5,196,107,0)}100%{box-shadow:0 0 0 0 rgba(5,196,107,0)}}
+.hero{padding:52px 0 8px}
+.wordmark{font-weight:900;font-size:26px;letter-spacing:-.02em}
+.wordmark b{color:var(--green)}
+.hero h1{font-size:clamp(40px,7vw,72px);line-height:.98;margin:22px 0 18px;letter-spacing:-.02em;font-weight:800;max-width:16ch}
+.hero h1 em{font-style:normal;color:var(--greenb)}
+.hero p{font-size:clamp(17px,2.2vw,22px);line-height:1.45;color:var(--muted);max-width:64ch;margin:0}
+.cta{margin-top:26px;display:flex;gap:11px;flex-wrap:wrap}
+.cta a{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:999px;text-decoration:none;font-weight:600;font-size:15px}
+.cta .primary{background:var(--ink);color:#fff}
+.cta .primary:hover{background:#000}
+.cta .ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.cta .ghost:hover{background:var(--card)}
+.proof-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin:40px 0 0;border:1px solid var(--line);background:var(--line);border-radius:14px;overflow:hidden}
+.proof-stat{background:var(--card);padding:20px 20px}
+.proof-stat strong{display:block;font-size:24px;line-height:1;margin-bottom:8px;letter-spacing:-.01em}
+.proof-stat strong .u{color:var(--greenb)}
+.proof-stat span{color:var(--muted);font-size:13.5px;line-height:1.4}
+.statement{margin-top:22px;border-radius:16px;background:var(--gd);color:#fff;padding:30px 32px;position:relative;overflow:hidden}
+.statement::after{content:"";position:absolute;right:-60px;bottom:-80px;width:280px;height:280px;border-radius:50%;background:var(--green);opacity:.16;filter:blur(50px)}
+.statement p{color:#d8dee2;font-size:clamp(18px,2.4vw,22px);line-height:1.5;margin:0;max-width:70ch;position:relative}
+.statement b{color:var(--green);font-weight:700}
+.section{margin-top:60px}
+.eyebrow{font:600 12px/1.5 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--greenb);margin-bottom:12px}
+.section h2{font-size:clamp(27px,3.6vw,38px);letter-spacing:-.02em;margin:0 0 10px;line-height:1.05;font-weight:800}
+.section .lede{font-size:17px;color:var(--muted);line-height:1.55;max-width:74ch;margin:0 0 22px}
+.tracks{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.track{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:22px 20px}
+.track .tag{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--greenb);background:rgba(5,196,107,.10);border:1px solid rgba(5,196,107,.25);border-radius:999px;padding:6px 10px;display:inline-block}
+.track h3{font-size:18px;margin:14px 0 12px;font-weight:800;letter-spacing:-.01em}
+.track ul{margin:0;padding:0;list-style:none}
+.track li{position:relative;padding:8px 0 8px 20px;font-size:14px;line-height:1.45;color:#2a2f34;border-top:1px solid var(--line)}
+.track li:first-child{border-top:0}
+.track li::before{content:"";position:absolute;left:0;top:15px;width:7px;height:7px;border-radius:50%;background:var(--green)}
+.track li b{color:var(--ink);font-weight:700}
+.phones{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:start}
+figure.shot{margin:0;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:#111;box-shadow:0 24px 60px -30px rgba(11,11,13,.45)}
+figure.shot img{display:block;width:100%;height:auto}
+figure.shot figcaption{background:var(--card);color:var(--muted);font:500 13px/1.45 "Outfit";padding:13px 16px;border-top:1px solid var(--line)}
+figure.shot figcaption b{color:var(--ink);font-weight:700}
+.trio{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+.card{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:26px}
+.card h3{margin:0 0 8px;font-size:20px;font-weight:800;letter-spacing:-.01em}
+.card p{margin:0 0 12px;color:var(--muted);font-size:15px;line-height:1.55}
+.card p:last-child{margin-bottom:0}
+.card b{color:var(--ink)}
+pre{margin:14px 0 0;background:#0b0b0d;color:#e7ebe9;border-radius:12px;padding:16px 18px;overflow-x:auto;font:500 12.5px/1.6 var(--mono)}
+pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
+.recgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;border:1px solid var(--line);background:var(--line);border-radius:14px;overflow:hidden}
+.rec{background:var(--card);padding:16px 18px}
+.rec .k{font:600 11px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.rec .v{font-size:15px;font-weight:600;word-break:break-all}
+.rec .v a{color:var(--greenb);text-decoration:none}
+.rec .v a:hover{text-decoration:underline}
+.boundaries{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:8px 26px}
+.boundaries .b{padding:16px 0;border-top:1px solid var(--line);font-size:15px;line-height:1.55;color:#2a2f34}
+.boundaries .b:first-child{border-top:0}
+.boundaries .b b{color:var(--ink)}
+.foot{margin-top:64px;border-top:1px solid var(--line);padding-top:22px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:14px}
+.foot a{color:var(--greenb);text-decoration:none}
+@media(max-width:900px){.proof-bar{grid-template-columns:1fr 1fr}.tracks{grid-template-columns:1fr}.phones{grid-template-columns:1fr 1fr}.trio{grid-template-columns:1fr}.recgrid{grid-template-columns:1fr}}
+@media(max-width:560px){.proof-bar{grid-template-columns:1fr 1fr}.phones{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="topline">
+    <span class="live"><span class="dot"></span>Live on Solana devnet</span>
+    <span>gaffer-cyan.vercel.app · World Cup 2026 · TxLINE / Superteam</span>
+  </div>
+
+  <header class="hero">
+    <div class="wordmark">gaffer<b>.</b></div>
+    <h1>Call it. Get paid <em>the second it happens.</em></h1>
+    <p>The World Cup, turned into a game you play with your mates — with no house in the pot, so no one can void your win, limit you, or stall your payout. The result itself releases the money: settlement is a CPI into TxLINE's <b>validate_stat</b>, which re-verifies the signed Merkle proof on-chain. The settler physically cannot post a false score.</p>
+    <div class="cta">
+      <a class="primary" href="https://gaffer-cyan.vercel.app" target="_blank" rel="noopener">▶ Open the live app</a>
+      <a class="ghost" href="https://github.com/Pratiikpy/gaffer" target="_blank" rel="noopener">Source</a>
+      <a class="ghost" href="https://gaffer-cyan.vercel.app/api/markets" target="_blank" rel="noopener">Live markets API</a>
+    </div>
+    <div class="proof-bar">
+      <div class="proof-stat"><strong>38<span class="u">/38</span></strong><span>kernel tests passing on devnet</span></div>
+      <div class="proof-stat"><strong>6.56 <span class="u">SOL</span></strong><span>in open pots, right now</span></div>
+      <div class="proof-stat"><strong>14</strong><span>live consumer features</span></div>
+      <div class="proof-stat"><strong>3 <span class="u">tracks</span></strong><span>one product, entered in all three</span></div>
+    </div>
+  </header>
+
+  <div class="statement">
+    <p>Every sports app makes you a customer of a house that profits when you lose — and the top complaint is always <b>"they won't pay me."</b> GAFFER removes the house. Calls go into a parimutuel pool; everyone who's right splits the pot, and <b>the match result releases the money</b> — verified against official data, on-chain, with no operator who <em>can</em> refuse you.</p>
+  </div>
+
+  <!-- THREE TRACKS -->
+  <section class="section">
+    <div class="eyebrow">One build, three tracks</div>
+    <h2>Everything a judge on each track wants, proven in one product.</h2>
+    <p class="lede">GAFFER is a single running product built on the LATCH parimutuel kernel. That one core is a fan's game, a trustless settlement engine, and the surface an autonomous agent fleet reads — so it competes credibly in all three TxLINE tracks at once.</p>
+    <div class="tracks">
+      <div class="track">
+        <span class="tag">Consumer</span>
+        <h3>A game a fan actually opens</h3>
+        <ul>
+          <li><b>No signup, no wallet</b> — make a real call in seconds</li>
+          <li><b>Reacts live</b> — the Ear calls goals off the market</li>
+          <li><b>Genuinely new</b> — parimutuel-no-house, not an odds feed</li>
+          <li><b>Real business</b> — capped rake, read from on-chain config</li>
+          <li><b>14 features</b>, all live, one registry</li>
+        </ul>
+      </div>
+      <div class="track">
+        <span class="tag">Prediction Markets &amp; Settlement</span>
+        <h3>The settler cannot lie</h3>
+        <ul>
+          <li><b>settle → validate_stat CPI</b> re-verifies the Merkle proof</li>
+          <li><b>Verifiable resolution</b> — a receipt anyone can check</li>
+          <li><b>Permissionless</b> — anyone may crank a settle</li>
+          <li><b>No P2P of the credit token</b> — pools escrow SOL</li>
+          <li><b>38/38</b> devnet kernel tests</li>
+        </ul>
+      </div>
+      <div class="track">
+        <span class="tag">Trading Tools &amp; Agents</span>
+        <h3>An autonomous fleet</h3>
+        <ul>
+          <li><b>Ingests live TxLINE odds</b>, executes decisions</li>
+          <li><b>Fully autonomous</b> — supervisor + keeper, no human</li>
+          <li><b>Deterministic, self-tested</b> cores (11/11 for the Ear)</li>
+          <li><b>The Gaffer's Ear</b> — calls the goal from the market</li>
+          <li><b>Production-hardened</b> — kept logs, restart, fail-closed</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE PRODUCT (screenshots) -->
+  <section class="section">
+    <div class="eyebrow">The product, on a phone</div>
+    <h2>Real screens, real outcomes — the whole thing in one scroll.</h2>
+    <p class="lede">Every screenshot below is the live app at gaffer-cyan.vercel.app, captured on a phone. Nothing is a mockup.</p>
+    <div class="phones">
+      <figure class="shot">
+        <img src="/proof-images/today.png" alt="The GAFFER matchday lobby: free call, quests, live pools, the whole feature set">
+        <figcaption><b>The matchday lobby.</b> A free daily call, today's goals, the Fans-vs-Market read, the Drama Meter, Ask-your-own, live pools, Hi-Lo, the knockout board — and the full 14-feature hub.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="/proof-images/live.png" alt="The Live tab: Match Centre, The Gaffer's Ear, and The Frozen Window">
+        <figcaption><b>Match Centre &amp; The Gaffer's Ear.</b> The Ear reads the match from the live market and names the moment before the score feed catches up — every call stamped and public. The Frozen Window opens on a VAR check or market silence.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="/proof-images/you.png" alt="The You tab: rank, league, run grid, and how GAFFER makes money">
+        <figcaption><b>Your cup.</b> Rank earned for life, the weekly league, your streak grid, and a transparent "how GAFFER makes money" — 0% house cut today, capped at 5% in the rules.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="/proof-images/onboarding.png" alt="Onboarding: a free call before any signup">
+        <figcaption><b>Onboarding in seconds.</b> Land, make a free "Goal before half-time?" call — no signup, no wallet, no seed phrase. The identity ask comes later, only when it's needed.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="/proof-images/landing.png" alt="The GAFFER landing page">
+        <figcaption><b>The landing.</b> The wedge in one line, and a live pot number pulled from the same feed the app runs on.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="/proof-images/squad.png" alt="The Squad tab">
+        <figcaption><b>The squad.</b> Your mates, their calls, the banter, and Fade Duels — the group-chat energy, made real.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- TRUSTLESS SETTLEMENT -->
+  <section class="section">
+    <div class="eyebrow">Prediction Markets &amp; Settlement</div>
+    <h2>The result releases the money — nobody posts it.</h2>
+    <p class="lede">Most on-chain markets settle by an operator <em>posting</em> the result and the contract trusting them. GAFFER proves the result to the chain instead. This is the exact settlement primitive the track asks builders to write.</p>
+    <div class="trio">
+      <div class="card">
+        <h3>A CPI into <code>validate_stat</code></h3>
+        <p>The LATCH kernel's <b>settle</b> fires a Cross-Program Invocation into TxLINE's on-chain <b>validate_stat</b>, which re-verifies the signed Merkle proof against the <b>daily_scores_roots</b> anchored on the oracle program, and returns a bool. The kernel reads it via return-data and <b>pays only on true</b> — or void-refunds if the predicate was never proven.</p>
+        <p>The settler's only power is to <b>ask</b>, and to pay the fee for asking. Cranking is permissionless: a bad crank just wastes its own fee. It can never misdirect a payout.</p>
+      </div>
+      <div class="card">
+        <h3>Verify it yourself</h3>
+        <pre><span class="c"># the whole trustless path, in one file</span>
+web/src/lib/settleEngine.ts
+
+<span class="c"># reproduce the 38/38 devnet suite</span>
+npm run test:kernel
+
+<span class="c"># the LATCH kernel, on devnet</span>
+<span class="g">HBJKUPdL…gwhcG</span>
+<span class="c"># the TxLINE oracle it verifies against</span>
+<span class="g">6pW64gN1…5wyP2</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- AGENTS -->
+  <section class="section">
+    <div class="eyebrow">Trading Tools &amp; Agents</div>
+    <h2>The Gaffer's Ear — reading the match from the market.</h2>
+    <p class="lede">An autonomous agent that infers real match events from the de-margined odds line alone, and anchors each call on-chain with a timestamp that can't be back-dated. It calls the goal before the score feed finalises. A supervisor keeps a fleet of six per-match agents plus a settlement keeper pointed at whatever the tournament is playing — no human in the loop.</p>
+    <div class="trio">
+      <div class="card">
+        <h3>Deterministic, self-tested, on-chain</h3>
+        <p>A pure classifier (<code>agents/ear.mjs</code>): a large one-sided implied-probability jump — absolute <b>or</b> relative, so a favourite extending its lead isn't missed — is a goal; sustained market silence is a stoppage; full time is anchored only on the feed's positive finalisation, never on silence, so a feed outage can't write a false result.</p>
+        <p>Every call is committed on-chain the instant it's made, with an Explorer receipt. Self-test: <b>11/11</b>.</p>
+        <pre><span class="c"># reproduce the Ear's logic gate</span>
+node agents/ear.mjs --selftest
+  <span class="g">✓ favourite goal caught by relative jump</span>
+  <span class="g">✓ near-certain twitch is not a goal</span>
+  <span class="g">selftest: PASS 11/11</span></pre>
+      </div>
+      <div class="card">
+        <h3>The fleet, running unattended</h3>
+        <p>One supervisor (<code>agents/worker.mjs</code>) discovers fixtures from the schedule, runs one isolated child per match (detector, market-maker, CLV tracker, arena, the Read explainer, the Ear), restarts a crash, and settles by poking the keeper the moment a match ends. A dedicated 20s keeper sweeps the live slate.</p>
+        <p>Deployed under systemd on a DigitalOcean droplet, keyless, with every decision appended to JSONL logs as kept evidence.</p>
+        <pre><span class="c"># the kept Track-3 evidence log</span>
+{"event":"boot","agents":["detector",
+ "market-maker","clv-tracker","arena",
+ "explainer","ear"]}
+{"event":"slate","watching":[18213979]}
+{"event":"settled","fixture":18172379,"paid":11}</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECEIPTS -->
+  <section class="section">
+    <div class="eyebrow">Receipts</div>
+    <h2>Every claim on this page has something behind it.</h2>
+    <div class="recgrid">
+      <div class="rec"><div class="k">Live product</div><div class="v"><a href="https://gaffer-cyan.vercel.app" target="_blank" rel="noopener">gaffer-cyan.vercel.app</a></div></div>
+      <div class="rec"><div class="k">Source</div><div class="v"><a href="https://github.com/Pratiikpy/gaffer" target="_blank" rel="noopener">github.com/Pratiikpy/gaffer</a></div></div>
+      <div class="rec"><div class="k">LATCH kernel (devnet)</div><div class="v"><a href="https://explorer.solana.com/address/HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG?cluster=devnet" target="_blank" rel="noopener">HBJKUPdL…gwhcG</a></div></div>
+      <div class="rec"><div class="k">TxLINE oracle program (devnet)</div><div class="v"><a href="https://explorer.solana.com/address/6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J?cluster=devnet" target="_blank" rel="noopener">6pW64gN1…5wyP2</a></div></div>
+      <div class="rec"><div class="k">Live open pools + pot</div><div class="v"><a href="https://gaffer-cyan.vercel.app/api/markets" target="_blank" rel="noopener">GET /api/markets</a></div></div>
+      <div class="rec"><div class="k">The Gaffer's Ear feed</div><div class="v"><a href="https://gaffer-cyan.vercel.app/api/ear-calls?fixture=18213979" target="_blank" rel="noopener">GET /api/ear-calls</a></div></div>
+      <div class="rec"><div class="k">Kernel test suite</div><div class="v">npm run test:kernel → 38/38</div></div>
+      <div class="rec"><div class="k">TxLINE endpoints used</div><div class="v">odds/snapshot · scores/historical · scores/stat-validation · fixtures/snapshot · guest auth + on-chain subscribe</div></div>
+    </div>
+  </section>
+
+  <!-- HONEST BOUNDARIES -->
+  <section class="section">
+    <div class="eyebrow">Honest boundaries</div>
+    <h2>The limits, next to the green numbers.</h2>
+    <div class="boundaries">
+      <div class="b"><b>Devnet only.</b> All real-money settlement runs on Solana devnet; nothing here has economic value yet, and none of these guarantees have run under mainnet adversarial conditions.</div>
+      <div class="b"><b>Odds are live; scores are post-match.</b> The dev feed streams in-running odds to the second but not live score events, so pool settlement resolves once the match finalises. "Reacts live" is the market and the Ear — never a fabricated scoreline. The app shows "score not in yet", never a fake 0-0.</div>
+      <div class="b"><b>The Ear's real-match capture is next.</b> Its logic is deterministic and self-tested and the on-chain commit path is real; a full capture on a genuine live World Cup match is the next proof, and the tournament is the only window to film it.</div>
+      <div class="b"><b>No demand data.</b> Testnet only — the market is argued from problem shape and a shipped product, not from users, retention, or revenue.</div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>GAFFER · built by <a href="https://github.com/Pratiikpy" target="_blank" rel="noopener">Pratik (Pratiikpy)</a>, solo · receipts over rhetoric</span>
+    <span><a href="https://gaffer-cyan.vercel.app" target="_blank" rel="noopener">Open the app →</a></span>
+  </div>
+
+</div>
+</body>
+</html>

@@ -93,7 +93,7 @@ export async function openFreeze(fixtureId: number, squadCode: string | null, un
             ${now}, ${now + LOCK_MS}, ${now + FREEZE_MS}, ${baseline}, 'open',
             ${JSON.stringify(seed != null ? [{ t: now, pct: seed }] : [])}::jsonb, ${note || (g1 > baseline ? "Home have it in the net." : "It's on the board.")})`;
   // The synchronized ping: everyone in the squad gets buzzed the instant the window opens.
-  if (squadCode) await pushSquad(squadCode, { title: "⚡ The Freeze is live", body: "Goal under review — 20s to call it. Does it stand?", url: "/", tag: `freeze:${id}` }, undefined, `fixture:${fixtureId}`, "B");
+  if (squadCode) await pushSquad(squadCode, { title: "The Frozen Window is live", body: "Goal under review — 20s to call it. Does it stand?", url: "/", tag: `freeze:${id}` }, undefined, `fixture:${fixtureId}`, "B");
   return (await getRound(id))!;
 }
 

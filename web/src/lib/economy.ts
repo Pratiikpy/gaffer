@@ -305,7 +305,7 @@ export async function enterKnockouts(userId: string): Promise<{ ok: boolean; rea
     WHERE user_id = ${userId} AND knockout_entry IS NULL RETURNING user_id`;
   if (!rows.length) {
     const has = await db()`SELECT knockout_entry FROM user_state WHERE user_id = ${userId}`;
-    if ((has as any[])[0]?.knockout_entry) return { ok: false, reason: "You're already in the knockout board." };
+    if ((has as any[])[0]?.knockout_entry) return { ok: false, reason: "You're already in The Decider." };
     return { ok: false, reason: "Couldn't enter — try again." };
   }
   return { ok: true };

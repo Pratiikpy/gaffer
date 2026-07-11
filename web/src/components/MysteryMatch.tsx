@@ -105,7 +105,7 @@ export default function MysteryMatch({ fixtureId, userId, token, onClose, onPoin
   return (
     <Shell onClose={onClose}>
       <div className="mono text-[10px] tracking-widest uppercase text-white/40 flex items-center justify-between">
-        <span>Mystery match</span><span>{calls.length}/{run.breaks.length} called</span>
+        <span>Relive a match</span><span>{calls.length}/{run.breaks.length} called</span>
       </div>
       <div className="mt-2 h-1 rounded-full bg-white/10 overflow-hidden">
         <div className="h-full bg-[var(--greenb)] transition-all duration-500" style={{ width: `${progress}%` }} />
@@ -137,7 +137,7 @@ export default function MysteryMatch({ fixtureId, userId, token, onClose, onPoin
 function Shell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] text-white px-6 py-8 flex flex-col justify-between" style={{ background: "radial-gradient(120% 90% at 50% 20%, #101a16, #0b0b0c)" }}>
-      <button onClick={onClose} aria-label="Close" className="self-end w-9 h-9 rounded-full bg-white/10 text-white/70 text-lg leading-none">×</button>
+      <button onClick={onClose} aria-label="Close" className="self-end w-9 h-9 rounded-full bg-white/10 text-white/70 text-lg leading-none">✕</button>
       <div className="flex-1 flex flex-col justify-center gap-5 max-w-sm w-full mx-auto">{children}</div>
     </div>
   );

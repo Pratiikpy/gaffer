@@ -254,7 +254,7 @@ export default function GafferApp() {
     if (!pendingPool || markets.length === 0) return;
     const m = markets.find((x) => x.pubkey === pendingPool);
     setPendingPool(null);
-    if (m) { fixtureChosen.current = true; setSelectedFixture(Number(m.fixtureId)); setDetail(m); flash("Your mate sent you this call 👇"); }
+    if (m) { fixtureChosen.current = true; setSelectedFixture(Number(m.fixtureId)); setDetail(m); flash("Your mate sent you this call."); }
   }, [pendingPool, markets]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { refresh(); if (!POLL) return; const t = setInterval(refresh, 15000); return () => clearInterval(t); }, [refresh]);
 
@@ -270,7 +270,7 @@ export default function GafferApp() {
         const b = await (kernel?.balanceSol() ?? Promise.resolve(0));
         if (b >= 0.02) return; // already has coins (returning device) — nothing to do
         const r = await ctxFund();
-        if (r && !r.error) { await refresh(); flash("We've spotted you some coins — go call something 🟢"); }
+        if (r && !r.error) { await refresh(); flash("We've spotted you some coins — go call something."); }
       } catch { /* faucet busy — the manual Add funds button still works */ }
     })();
   }, [address, mode, kernel, ctxFund, refresh]);
@@ -771,7 +771,7 @@ export default function GafferApp() {
           userId={userId}
           onCall={frozenCall}
           onDismiss={() => { const id = (frozenActive || frozenReveal)?.id; if (id) setFrozenSeen(id); refreshPoints(); if (squadCode) refreshSquad(); }}
-          onPinLore={(text: string) => { if (squadCode) postBanter(`📌 ${text}`); }}
+          onPinLore={(text: string) => { if (squadCode) postBanter(`Pinned — ${text}`); }}
         />
       )}
       {ambient && <AmbientView fixtureId={selectedFixture} positions={positions} onClose={() => setAmbient(false)} />}
@@ -824,6 +824,7 @@ export default function GafferApp() {
           onFreePick={(side) => freePick(side)}
           freePicked={freePicked}
           matchLabel={FIXTURE_NAMES[String(selectedFixture)] ? `${fx(selectedFixture).home} v ${fx(selectedFixture).away}` : "The match is on"}
+          matchLive={fixtures.find((f: any) => f.fixtureId === selectedFixture)?.state === "live"}
           nation={nation}
           /* If they arrived on an invite, show the squad already calling it before any ask. */
           mates={(squadData?.feed || [])
@@ -1012,11 +1013,12 @@ function OnboardNext({ label, onClick, onSkip }: { label: string; onClick: () =>
   );
 }
 
-function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation, onSaveName, onAskPush, onShare }: {
+function Onboarding({ onDone, onFreePick, freePicked, matchLabel, matchLive, mates, nation, onSaveName, onAskPush, onShare }: {
   onDone: () => void;
   onFreePick?: (side: "yes" | "no") => void;
   freePicked?: boolean;
   matchLabel?: string;
+  matchLive?: boolean;
   mates?: { name: string; side: number }[];
   nation?: string;
   onSaveName?: (n: string) => void;
@@ -1030,7 +1032,7 @@ function Onboarding({ onDone, onFreePick, freePicked, matchLabel, mates, nation,
   // 0–10s: you are already in the match, and your mates are already in it.
   if (step === 0) return (
     <OnboardShell>
-      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{invited ? "Your squad is in" : "On right now"}</div>
+      <div className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">{invited ? "Your squad is in" : matchLive ? "On right now" : "Up next"}</div>
       <div className="text-3xl font-extrabold tracking-tight mt-2">{matchLabel || "The match is on."}</div>
       {invited ? (
         <div className="mt-5 w-full max-w-xs space-y-1.5">
@@ -1497,7 +1499,7 @@ function KnockoutEntry({ econ, onEnter, busy, name }: { econ: Economy | null; on
     return (
       <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
         <div className="flex items-center justify-between">
-          <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Knockout board</span>
+          <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">The Decider</span>
           <span className="mono text-[10px] font-bold text-[var(--green)]">#{k.rank} of {k.size}</span>
         </div>
         <div className="mt-3 space-y-1.5">
@@ -1517,7 +1519,7 @@ function KnockoutEntry({ econ, onEnter, busy, name }: { econ: Economy | null; on
     return (
       <div className="mt-4 rounded-2xl p-4 bg-[var(--green)]/10 border border-[var(--green)]/30">
         <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">You&apos;re in</div>
-        <div className="text-sm font-bold mt-0.5">The knockout board opens {startLabel}.</div>
+        <div className="text-sm font-bold mt-0.5">The Decider opens {startLabel}.</div>
         <p className="text-[12px] text-[var(--muted)] mt-0.5">Everyone starts level. Nothing before it counts.</p>
       </div>
     );
@@ -1528,10 +1530,10 @@ function KnockoutEntry({ econ, onEnter, busy, name }: { econ: Economy | null; on
       <div className="mono text-[10px] tracking-widest uppercase text-[var(--green)]">Joined late?</div>
       <div className="text-lg font-black mt-0.5 leading-tight">You haven&apos;t missed it.</div>
       <p className="text-[12px] opacity-75 mt-1 leading-snug">
-        The knockout board starts everyone level on {startLabel}. Turn up then and you can still win the whole thing.
+        The Decider is a clean slate for the knockout rounds — everyone level, nothing before it counts. Join now and you can still win the whole thing.
       </p>
       <button onClick={onEnter} disabled={busy} className="mt-3 w-full py-2.5 rounded-xl bg-white text-[var(--ink)] font-bold text-sm disabled:opacity-40">
-        Enter the knockout board
+        Enter The Decider
       </button>
     </div>
   );
@@ -2956,8 +2958,6 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
     const t = POLL ? setInterval(read, 15_000) : null;
     return () => { on = false; if (t) clearInterval(t); };
   }, [fixtureId]);
-  if (!calls.length) return null;
-
   const headline = (c: EarCall) =>
     c.kind === "goal" ? `GOAL${c.team ? " — " + c.team : c.side === "draw" ? " — leveller" : ""}`
     : c.kind === "stoppage" ? "Under review" : "Full time";
@@ -2972,7 +2972,15 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--greenb)] gf-pulse" />
         <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">The Gaffer&apos;s Ear</span>
       </div>
-      <div className="mono text-[9px] text-white/40 mt-1">reads the match from the market — before the score feed. every call proved on-chain.</div>
+      <div className="mono text-[9px] text-white/40 mt-1">reads the match from the live market — before the score feed catches up. every call is stamped and public.</div>
+      {/* Always on the Live tab, even before kickoff — the flagship should explain itself, not vanish when the
+          feed is quiet. When it hasn't called anything yet it says so honestly rather than inventing a moment. */}
+      {!calls.length ? (
+        <div className="mt-3 flex items-center gap-2.5 text-white/60">
+          <span className="w-1.5 h-1.5 rounded-full bg-white/40 gf-pulse shrink-0" />
+          <span className="text-[12px] leading-snug">Listening for the next big moment — a goal, a review, full time. Nothing called yet.</span>
+        </div>
+      ) : (
       <div className="mt-3 space-y-2.5">
         {calls.slice(0, 5).map((c, i) => (
           <div key={i} className="flex items-start gap-3">
@@ -2988,6 +2996,7 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -3027,9 +3036,11 @@ function HalftimeBeat({ pulse, onTwist, busy }: { pulse: LivePulse | null; onTwi
   );
 }
 
-/** L2 — the market has stopped quoting. Shown as a state, never as a claim about what happened. */
+/** L2 — the market has stopped quoting. Shown as a state, never as a claim about what happened. Gated on
+ * the match actually running: before kickoff the book is naturally silent, and "something is happening"
+ * there would be a false signal — the quiet only means something once play is live. */
 function MarketQuiet({ pulse }: { pulse: LivePulse | null }) {
-  if (!pulse?.marketQuiet || pulse.finished) return null;
+  if (!pulse?.marketQuiet || pulse.finished || !pulse.running) return null;
   return (
     <div className="mt-3 rounded-2xl p-3.5 bg-white border border-[var(--line)] flex items-center gap-3">
       <span className="w-2 h-2 rounded-full bg-[#D8A32B] animate-pulse shrink-0" />
@@ -3352,7 +3363,7 @@ function FrozenWindow({ round, userId, onCall, onDismiss, onPinLore }: any) {
             </div>
           )}
           <div className="mt-5 flex gap-2">
-            {won && <button onClick={() => onPinLore(`${optLabel(round.outcome)} — I called it. ${round.lore}`)} className="flex-1 py-3.5 rounded-2xl bg-white/15 text-white font-bold text-sm">📌 Pin to lore</button>}
+            {won && <button onClick={() => onPinLore(`${optLabel(round.outcome)} — I called it. ${round.lore}`)} className="flex-1 py-3.5 rounded-2xl bg-white/15 text-white font-bold text-sm">Pin to lore</button>}
             <button onClick={onDismiss} className="flex-1 py-3.5 rounded-2xl bg-white text-[#05100b] font-bold">Done</button>
           </div>
         </div>
@@ -3579,10 +3590,11 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
       <details className="mt-2 bg-white border border-[var(--line)] rounded-2xl p-4">
         <summary className="font-bold text-[15px] cursor-pointer list-none flex items-center justify-between">How points work<span className="mono text-[10px] text-[var(--muted)]">tap</span></summary>
         <div className="mt-3 space-y-1.5 text-[13px] text-[var(--muted)]">
-          <div className="flex justify-between"><span>Make your free daily call</span><span className="font-bold text-[var(--ink)]">+5</span></div>
+          <div className="flex justify-between"><span>Make your free daily call</span><span className="font-bold text-[var(--ink)]">+50</span></div>
+          <div className="flex justify-between"><span>Land your free call</span><span className="font-bold text-[var(--green)]">+25</span></div>
           <div className="flex justify-between"><span>Back a call with coins</span><span className="font-bold text-[var(--ink)]">+3</span></div>
-          <div className="flex justify-between"><span>Land a call (it comes in)</span><span className="font-bold text-[var(--green)]">+25</span></div>
-          <div className="flex justify-between"><span>Keep your streak alive</span><span className="font-bold text-[var(--ink)]">bonus</span></div>
+          <div className="flex justify-between"><span>Win a coin-backed call</span><span className="font-bold text-[var(--green)]">+100</span></div>
+          <div className="flex justify-between"><span>Keep your streak alive</span><span className="font-bold text-[var(--ink)]">+5</span></div>
           <p className="pt-2 leading-relaxed">Points track your football read — how often you call it right — not luck and not how much you put in. No hidden multipliers, no fake accuracy scores.</p>
         </div>
       </details>

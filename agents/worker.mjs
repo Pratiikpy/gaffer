@@ -29,7 +29,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const BASE = (process.env.GAFFER_API || process.env.BASE || "http://127.0.0.1:3000").replace(/\/$/, "");
 const REFRESH_MS = Number(process.env.REFRESH_SECS || 300) * 1000;   // re-check the slate every 5 min
-const AGENTS = ["detector", "market-maker", "clv-tracker", "arena", "explainer"];
+const AGENTS = ["detector", "market-maker", "clv-tracker", "arena", "explainer", "ear"];
 
 function log(entry) {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });

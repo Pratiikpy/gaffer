@@ -123,17 +123,19 @@ export async function settleMarket(program: any, market: string): Promise<Settle
   return { settled: true, sig, provenValue: bundle.statToProve.value, outcome: paidYes ? "YES" : "VOID" };
 }
 
-/** The status the chain wrote for a just-settled market, retrying a couple of times because the read can
- * race the confirmation. Returns `null` only if the chain truly won't answer — the caller then skips the
- * paid-side bookkeeping rather than inventing a payout. (1 = YES, 2 = VOID, 3 = NO.) */
+/** The status the chain wrote for a just-settled market, retrying because the read can race the
+ * confirmation. We JUST settled, so a status of 0 (still open) is not a real answer — a load-balanced RPC
+ * can serve a pre-settle account view without throwing — and is retried, not accepted. Returns `null` only
+ * if the chain never gives a settled status; the caller then skips the paid-side bookkeeping rather than
+ * inventing a payout. (0 = open, 1 = YES, 2 = VOID, 3 = NO.) */
 async function readSettledStatus(program: any, marketPk: PublicKey): Promise<number | null> {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     try {
       const m: any = await program.account.market.fetch(marketPk);
-      return Number(m.status);
-    } catch {
-      if (i < 2) await new Promise((r) => setTimeout(r, 400));
-    }
+      const status = Number(m.status);
+      if (status !== 0) return status;           // a real settled status
+    } catch { /* transient — retry */ }
+    if (i < 3) await new Promise((r) => setTimeout(r, 400));
   }
   return null;
 }

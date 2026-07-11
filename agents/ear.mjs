@@ -28,6 +28,7 @@
 // without a fresh quote (its suspension signal). `wasRunning`/`isRunning` are the in-running flags.
 export const GOAL_PTS = 12;        // a one-sided implied-% jump this big is a goal, not noise
 export const SUSPEND_MS = 25_000;  // market quiet this long = a stoppage the book is pricing around
+const FULLTIME_CLOSED_MS = 18 * 60_000; // a close that outlasts any ~15-min halftime break = full time
 
 /** Returns an event {kind, side, confidence, move, evidence} or null. Pure and deterministic. */
 export function readEvent(prev, next, silentMs = 0, wasRunning = true, isRunning = true) {
@@ -123,19 +124,34 @@ async function tick(fixtures, state) {
         fetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
         fetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
       ]);
-      const st = state[f] || (state[f] = { prev: null, wasRunning: true });
+      const st = state[f] || (state[f] = { prev: null, everRan: false, closedSince: 0, calledFT: false });
       const isRunning = !!(live?.running);
       const silentMs = Number(live?.silentMs || 0);
       const now = o?.hasOdds ? { home: o.home, draw: o.draw, away: o.away } : st.prev;
-      const ev = readEvent(st.prev, now, silentMs, st.wasRunning, isRunning);
+
+      // Read goals / stoppages ONLY while the match is actually in-running. Before kickoff a static book
+      // sits unchanged (which looks like a suspension) and after full-time the market is shut — neither is
+      // a live event. This is the same guard the Blackout uses (rounds.ts gates silence on `live.running`).
+      let ev = isRunning ? readEvent(st.prev, now, silentMs, true, true) : null;
       st.prev = now || st.prev;
-      st.wasRunning = isRunning || st.wasRunning === false ? isRunning : st.wasRunning; // track live→closed once
-      st.wasRunning = isRunning;
+
+      // Full-time is a close that STAYS shut past any ~15-min halftime break — timed, not tick-counted, so
+      // the poll interval doesn't matter, and fired exactly once. A halftime suspension reopens well before
+      // the threshold and resets the timer, so it is never mistaken for full time.
+      if (isRunning) { st.everRan = true; st.closedSince = 0; }
+      else if (st.everRan && !st.closedSince) st.closedSince = Date.now();
+      if (!ev && st.everRan && !st.calledFT && st.closedSince && Date.now() - st.closedSince >= FULLTIME_CLOSED_MS) {
+        st.calledFT = true;
+        ev = { kind: "fulltime", side: null, confidence: 0.85, move: 0, evidence: "market closed and stayed shut - full time" };
+      }
       if (!ev) continue;
       const nm = await nameFor(f);
-      // Commit the call on-chain the moment it's made — the timestamp cannot be back-dated.
+      // Commit the call on-chain the moment it's made — the timestamp cannot be back-dated. Authenticated,
+      // so only the agent (never an anonymous POST) can write a call that shows in the app as genuine.
+      const headers = { "content-type": "application/json" };
+      if (process.env.GAFFER_ADMIN_KEY) headers["x-gaffer-key"] = process.env.GAFFER_ADMIN_KEY;
       const commit = await fetch(`${BASE}/api/commit-ear`, {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST", headers,
         body: JSON.stringify({ fixtureId: f, kind: ev.kind, side: ev.side, team: teamName(ev.side, nm), confidence: ev.confidence, evidence: ev.evidence }),
       }).then((r) => r.json()).catch(() => null);
       logLine({ fixture: f, action: "call", kind: ev.kind, side: ev.side, team: teamName(ev.side, nm), confidence: ev.confidence, move: ev.move, evidence: ev.evidence, sig: commit?.sig || null, hash: commit?.hash || null });

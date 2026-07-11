@@ -12,6 +12,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PROGRAM_ID = new PublicKey((idl as any).address);
+
+// Cranking is permissionless by design (the chain re-verifies every proof, so a bad crank can't misdirect
+// money) — but the fee spend is not free, so throttle it like /api/settle does, and never spend below a
+// floor. Without this an anyone-can-call route sends two 600k-CU txs per hit with no bound.
+const MIN_SOL = 0.3;
+const hits = new Map<string, number[]>();
+function throttled(ip: string): boolean {
+  const now = Date.now(), win = hits.get(ip)?.filter((t) => now - t < 60_000) ?? [];
+  if (win.length >= 6) { hits.set(ip, win); return true; }
+  win.push(now); hits.set(ip, win); return false;
+}
+
 const node = (n: any) => ({ hash: n.hash, isRightSibling: n.isRightSibling });
 const summaryOf = (b: any) => ({
   fixtureId: new BN(b.summary.fixtureId),
@@ -38,9 +50,13 @@ const termOf = (b: any) => ({
  */
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+    if (throttled(ip)) return NextResponse.json({ settled: false, reason: "one at a time" }, { status: 429 });
+
     const { market } = await req.json();
     const conn = new Connection(RPC, "confirmed");
     const kp = loadServerKeypair();
+    if ((await conn.getBalance(kp.publicKey)) / 1e9 < MIN_SOL) return NextResponse.json({ settled: false, reason: "below server SOL floor" }, { status: 503 });
     const program: any = new Program(idl as any, new AnchorProvider(conn, new KeypairWallet(kp), { commitment: "confirmed" }));
 
     const marketPk = new PublicKey(market);

@@ -31,7 +31,10 @@ function throttled(ip: string): boolean {
 /** The stat's value in the feed right now — the veto on markets that have already happened.
  *  `null` when the feed has nothing on this fixture (a match yet to kick off), which vetoes nothing. */
 async function currentStat(fixtureId: number, statKey: number): Promise<number | null> {
-  const stats = await cached(`finalstats:${fixtureId}`, { ttlMs: 5_000, swrMs: 30_000, staleMs: 60_000 }, async () => {
+  // This feeds the already-true veto, so it must be near-fresh: a long stale-while-revalidate window here
+  // could serve a pre-goal count and wave through a predicate that has, in reality, just come true. Keep
+  // this layer's staleness to a few seconds (the underlying feed read has its own short cache).
+  const stats = await cached(`finalstats:${fixtureId}`, { ttlMs: 2_000, swrMs: 3_000, staleMs: 8_000 }, async () => {
     const events: any[] = await txline().historicalEvents(fixtureId);
     const withStats = [...events].reverse().find((e) => e?.Stats && e.Stats["1"] != null);
     return (withStats?.Stats ?? null) as Record<string, number> | null;

@@ -384,9 +384,11 @@ export async function getSettle(market: string) {
 export const SETTLE_STAT_MAX_MS = 3_600_000;
 export const settleStatUsable = (ms: number | null | undefined) => ms != null && ms >= 0 && ms < SETTLE_STAT_MAX_MS;
 
-/** C6/C1 — record a win from the CHAIN, never from a number the client sent. The payout is the owner's
- * real lamport delta on their own claim transaction (fee added back); the stake is the on-chain Position
- * amount. A user cannot inflate their own brag: both figures come from the ledger they can't forge. */
+/** C6/C1 — record a win, with the PAYOUT taken from the chain, never from the client: it is the owner's
+ * real lamport delta on their own claim transaction (fee added back), and the tx is checked to be signed
+ * by that user. The stake is the caller's reported figure (the winning Position is consumed by `claim`, so
+ * it can't be re-read after the fact) and is used only for the displayed multiplier — it moves no money and
+ * grants no points, so a misreported stake distorts one cosmetic ratio and nothing else. */
 export async function recordWinFromChain(opts: {
   conn: any; userId: string; sig: string; name?: string; question?: string; market?: string;
   stakeLamports?: number;
@@ -426,11 +428,13 @@ export async function recordWinFromChain(opts: {
 export async function biggestWins(limit = 12) {
   // One row per caller: their best win. A plain ORDER BY payout DESC lets a single person who backed the
   // same pool six times own the whole board — six identical rows, which reads as a bug rather than a
-  // leaderboard. Every number is still their own on-chain lamport delta; we just stop repeating one.
-  // `DISTINCT ON` must sort by `name` first, so the pruning happens inside and the board is ranked outside.
+  // leaderboard. Dedup on `user_id` (the identity), NOT the free-text display name: keying on name would
+  // collapse two different people who share a name into one row, and would fail to dedup one person who
+  // varies their name. `DISTINCT ON` must sort by its key first, so the pruning happens inside and the
+  // board is ranked outside.
   const r = await db()`SELECT * FROM (
-      SELECT DISTINCT ON (name) name, question, stake_lamports, payout_lamports, called_at, settled_after_ms, ts
-      FROM wins ORDER BY name, payout_lamports DESC, ts DESC
+      SELECT DISTINCT ON (user_id) name, question, stake_lamports, payout_lamports, called_at, settled_after_ms, ts
+      FROM wins ORDER BY user_id, payout_lamports DESC, ts DESC
     ) best ORDER BY payout_lamports DESC LIMIT ${Math.min(50, limit)}`;
   return (r as any[]).map((x) => ({
     name: x.name || "A caller",

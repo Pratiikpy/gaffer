@@ -1232,6 +1232,10 @@ function MarketRead({ fixtureId, home, away }: { fixtureId: number; home: string
         if (d?.hasOdds) {
           const now = { home: d.home, draw: d.draw, away: d.away };
           const p = prev.current;
+          // Record this tick's line synchronously, BEFORE any await — otherwise a fixture switch during the
+          // explain-move fetch would let this stale closure write the old fixture's odds over the new one's
+          // freshly-reset ref, corrupting the next diff.
+          prev.current = now;
           if (p) {
             let side = "", from = 0, to = 0, best = 0;
             for (const k of ["home", "draw", "away"] as const) { const mv = Math.abs((now[k] ?? 0) - (p[k] ?? 0)); if (mv >= 6 && mv > best) { best = mv; side = k; from = p[k]; to = now[k]; } }
@@ -1240,7 +1244,6 @@ function MarketRead({ fixtureId, home, away }: { fixtureId: number; home: string
               if (live && r?.line) setRead(r.line);
             }
           }
-          prev.current = now;
         }
       } catch { /* transient — try again next tick */ }
     };

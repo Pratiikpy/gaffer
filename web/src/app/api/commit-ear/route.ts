@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { createHash } from "node:crypto";
-import { loadServerKeypair } from "@/lib/serverConfig";
+import { loadServerKeypair, adminOk } from "@/lib/serverConfig";
 import { RPC } from "@/lib/config";
 import { db } from "@/lib/db";
 
@@ -38,14 +38,22 @@ function rateOk(fixtureId: number): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    // Only the agent may write a call — an anonymous POST must not appear in the app as a genuine Ear call
+    // (nor spend the shared wallet). Open only on a local dev server (ALLOW_OPEN_ADMIN), never in prod.
+    if (!adminOk(req)) return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+
     const b = await req.json().catch(() => ({}));
     const fixtureId = Number(b?.fixtureId) || 0;
     const kind = String(b?.kind || "");
     if (!fixtureId || !["goal", "stoppage", "fulltime"].includes(kind)) {
       return NextResponse.json({ ok: false, reason: "bad call" }, { status: 400 });
     }
+    // Reserve the rate-limit slot BEFORE the (slow) transaction, so two concurrent calls can't both pass
+    // the check while the first is still confirming.
     const rl = rateOk(fixtureId);
     if (rl) return NextResponse.json({ ok: false, reason: rl }, { status: 429 });
+    lastByFixture.set(fixtureId, Date.now());
+    windowCount += 1;
 
     const side = ["home", "away", "draw"].includes(String(b?.side)) ? String(b.side) : "";
     const conf = Math.max(0, Math.min(1, Number(b?.confidence) || 0));
@@ -69,9 +77,6 @@ export async function POST(req: NextRequest) {
     tx.sign(kp);
     const sig = await conn.sendRawTransaction(tx.serialize());
     await conn.confirmTransaction(sig, "confirmed");
-
-    lastByFixture.set(fixtureId, Date.now());
-    windowCount += 1;
 
     // Persist the call so the live app feed can show it, with its on-chain proof. Server ts, not the
     // agent's — the timestamp is authoritative here. Best-effort: a DB hiccup never fails a landed commit.

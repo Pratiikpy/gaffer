@@ -14,6 +14,14 @@ const MODEL = "meta/llama-3.1-70b-instruct"; // verified live on NIM
 
 const cache = new Map<string, { at: number; line: string }>();
 
+// The per-moment cache is bypassed by varying `detail` a character; throttle per IP since NIM costs money.
+const hits = new Map<string, number[]>();
+function throttled(ip: string): boolean {
+  const now = Date.now(), win = hits.get(ip)?.filter((t) => now - t < 60_000) ?? [];
+  if (win.length >= 15) { hits.set(ip, win); return true; }
+  win.push(now); hits.set(ip, win); return false;
+}
+
 // Never-blank fallback: a templated pundit line per moment type, used if the model is slow/unset.
 function fallback(kind: string, who: string): string {
   const f: Record<string, string> = {
@@ -31,6 +39,8 @@ function fallback(kind: string, who: string): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+    if (throttled(ip)) return NextResponse.json({ line: "Catching my breath — one sec.", source: "throttled" }, { status: 429 });
     const b = await req.json();
     const kind = String(b.kind || "chance");
     const home = String(b.home || "the home side"), away = String(b.away || "the away side");

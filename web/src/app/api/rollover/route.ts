@@ -49,12 +49,20 @@ async function sweep(req: NextRequest) {
       if (!byMarket.has(m)) byMarket.set(m, []);
       byMarket.get(m)!.push({ claimed: !!p.account.claimed, side: Number(p.account.side) });
     }
-    const SIDE_YES = 1;
+    const SIDE_YES = 1, SIDE_NO = 2;
     /** Is anyone still owed money out of this vault?
-     *  status 1 (SettledYes): only unclaimed YES holders are owed.
-     *  status 2 (Void):       every unclaimed holder, either side, is owed their stake back. */
+     *  status 1 (SettledYes): only unclaimed YES holders are owed — a losing NO position is never claimed.
+     *  status 3 (SettledNo):  only unclaimed NO holders are owed — a losing YES position is never claimed.
+     *  status 2 (Void):       every unclaimed holder, either side, is owed their stake back.
+     *
+     *  The winning-side check matters: on a settled market the losing side can NEVER claim (the kernel's
+     *  `claim` reverts `NotWinner`), so `claimed` stays false for it forever. Treating status 3 like a void
+     *  — "any unclaimed position is owed" — meant every NO-settled market with even one YES backer looked
+     *  perpetually owed, and its dust was never swept into the rollover pot. */
     const stillOwed = (status: number, pos: { claimed: boolean; side: number }[]) =>
-      status === 1 ? pos.some((p) => !p.claimed && p.side === SIDE_YES) : pos.some((p) => !p.claimed);
+      status === 1 ? pos.some((p) => !p.claimed && p.side === SIDE_YES)
+      : status === 3 ? pos.some((p) => !p.claimed && p.side === SIDE_NO)
+      : pos.some((p) => !p.claimed);
 
     let sweptLamports = 0, sweptMarkets = 0;
     const skipped: string[] = [];

@@ -18,6 +18,15 @@ const MODEL = "meta/llama-3.1-70b-instruct";
 
 const cache = new Map<string, { at: number; line: string }>();
 
+// The cache only helps repeated identical moves; a caller varying `from`/`to` by a point bypasses it and
+// hits the paid model every time. Throttle per IP, like /api/compile-market, since inference costs money.
+const hits = new Map<string, number[]>();
+function throttled(ip: string): boolean {
+  const now = Date.now(), win = hits.get(ip)?.filter((t) => now - t < 60_000) ?? [];
+  if (win.length >= 12) { hits.set(ip, win); return true; }
+  win.push(now); hits.set(ip, win); return false;
+}
+
 const teamFor = (side: string, home: string, away: string) => (side === "home" ? home : side === "away" ? away : "the draw");
 
 /** Never-blank, and never dishonest: describes the measured move without inventing a cause. */
@@ -31,6 +40,8 @@ function fallback(side: string, delta: number, home: string, away: string): stri
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+    if (throttled(ip)) return NextResponse.json({ line: "One read at a time — give it a second.", source: "throttled" }, { status: 429 });
     const b = await req.json();
     const home = String(b.home || "the home side"), away = String(b.away || "the away side");
     const side = ["home", "draw", "away"].includes(String(b.side)) ? String(b.side) : "home";

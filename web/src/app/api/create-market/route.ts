@@ -35,6 +35,9 @@ export async function POST(req: NextRequest) {
 
     const conn = new Connection(RPC, "confirmed");
     const kp = loadServerKeypair();
+    // Defense-in-depth: even behind adminOk, never mint the wallet below a floor — if the admin key ever
+    // leaked, an unbounded mint spam would otherwise drain the wallet that also settles pools.
+    if ((await conn.getBalance(kp.publicKey)) / 1e9 < 0.3) return NextResponse.json({ error: "below server SOL floor" }, { status: 503 });
     const program: any = new Program(idl as any, new AnchorProvider(conn, new KeypairWallet(kp), { commitment: "confirmed" }));
 
     const id = new BN(Date.now()).mul(new BN(1000)).add(new BN(Math.floor(Math.random() * 1000))); // ms + entropy → no same-ms PDA collision

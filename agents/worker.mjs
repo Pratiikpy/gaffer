@@ -59,7 +59,13 @@ function startOne(agent, fixture) {
   const rec = { proc, stopped: false };
   proc.on("exit", (code) => {
     if (rec.stopped) return;                             // we killed it — match left the slate
-    log({ event: "agent_exit", agent, fixture, code, note: "restarting in 10s" });
+    // A clean exit (code 0) is an agent that finished its own job, not a crash: clv-tracker and arena are
+    // terminal — they lock their entry at kickoff / settle at full time, then exit 0. Respawning those would
+    // (a) spin a pointless 10s restart loop for the rest of the match and (b) make clv re-seed its "entry"
+    // at the current, post-kickoff line — silently corrupting the very closing-line-value it exists to
+    // measure. Only restart on a real crash (non-zero exit).
+    if (code === 0) { log({ event: "agent_done", agent, fixture, note: "clean exit — job finished, not restarting" }); children.delete(key); return; }
+    log({ event: "agent_exit", agent, fixture, code, note: "crash — restarting in 10s" });
     setTimeout(() => { if (children.get(key) === rec) startOne(agent, fixture); }, 10_000);
   });
   children.set(key, rec);

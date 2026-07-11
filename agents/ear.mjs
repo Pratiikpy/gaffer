@@ -26,9 +26,14 @@
 //
 // `prev`/`next` are {home, draw, away} de-margined implied %. `silentMs` is how long the market has gone
 // without a fresh quote (its suspension signal). `wasRunning`/`isRunning` are the in-running flags.
-export const GOAL_PTS = 12;        // a one-sided implied-% jump this big is a goal, not noise
+export const GOAL_PTS = 12;        // an ABSOLUTE one-sided implied-% jump this big is a goal, not noise
+// A pure absolute cutoff misses goals when one side is already heavily favoured: a 85%→92% winner moves
+// the de-margined line only ~7pt, under GOAL_PTS, yet it is unmistakably a goal. So we ALSO fire on a
+// RELATIVE jump — the scoring side closing a big fraction of its remaining distance to certainty — gated
+// by a small absolute floor so a 96%→98% twitch (huge relative, trivial absolute) is still rejected.
+export const REL_GAIN = 0.33;      // captured >= 1/3 of the remaining probability to 100%
+export const REL_MIN_PTS = 5;      // ...and moved at least this many absolute points
 export const SUSPEND_MS = 25_000;  // market quiet this long = a stoppage the book is pricing around
-const FULLTIME_CLOSED_MS = 18 * 60_000; // a close that outlasts any ~15-min halftime break = full time
 
 /** Returns an event {kind, side, confidence, move, evidence} or null. Pure and deterministic. */
 export function readEvent(prev, next, silentMs = 0, wasRunning = true, isRunning = true) {
@@ -44,13 +49,18 @@ export function readEvent(prev, next, silentMs = 0, wasRunning = true, isRunning
     const d = (next[k] ?? 0) - (prev[k] ?? 0);     // signed: a RISE in an outcome's probability
     if (d > move) { move = d; side = k; }
   }
+  // Relative jump: what fraction of the rising side's remaining distance-to-certainty this move closed.
+  const rel = side ? move / Math.max(1, 100 - (prev[side] ?? 0)) : 0;
 
   // A goal is a large, sudden rise in one outcome's win probability — the scoring side (or the draw, on a
-  // leveller). Bookings and corners don't move the 1X2 line this far; only a goal or a red card does, and a
-  // move this size is overwhelmingly a goal.
-  if (move >= GOAL_PTS) {
+  // leveller). Bookings and corners don't move the 1X2 line this far; only a goal or a red card does. We
+  // fire on either an absolute jump (a mid-line swing) OR a relative one (a favourite extending), so goals
+  // scored by an already-favoured side aren't silently missed.
+  if (move >= GOAL_PTS || (move >= REL_MIN_PTS && rel >= REL_GAIN)) {
     const label = side === "draw" ? "a leveller (draw now favoured)" : `${side} side`;
-    return { kind: "goal", side, confidence: Math.min(0.98, 0.5 + move / 40), move: Math.round(move),
+    // Confidence blends the absolute size and how much of the remaining probability it closed.
+    const confidence = Math.min(0.98, 0.5 + move / 40 + rel / 4);
+    return { kind: "goal", side, confidence, move: Math.round(move),
       evidence: `${Math.round(move)}-pt implied-probability jump toward ${label}${silentMs >= SUSPEND_MS ? ", off a suspension" : ""}` };
   }
 
@@ -76,6 +86,11 @@ function selftest() {
   // A leveller: draw jumps most.
   const lev = readEvent({ home: 55, draw: 25, away: 20 }, { home: 30, draw: 45, away: 25 });
   t("leveller detected as goal, side=draw", lev?.kind === "goal" && lev.side === "draw");
+  // A heavy favourite scores: only a ~7pt absolute move, but it closes ~half the remaining probability.
+  const fav = readEvent({ home: 85, draw: 10, away: 5 }, { home: 92, draw: 5, away: 3 });
+  t("favourite goal caught by relative jump", fav?.kind === "goal" && fav.side === "home");
+  // A near-certain twitch (96→98): huge relative but tiny absolute → still rejected as noise.
+  t("near-certain twitch is not a goal", readEvent({ home: 96, draw: 3, away: 1 }, { home: 98, draw: 1, away: 1 }) === null);
   // Small drift → nothing.
   t("small drift is not an event", readEvent({ home: 40, draw: 30, away: 30 }, { home: 43, draw: 29, away: 28 }) === null);
   // Suspension with no move → stoppage.
@@ -126,7 +141,7 @@ async function tick(fixtures, state) {
         jfetch(`${BASE}/api/odds/${f}`).then((r) => r.json()),
         jfetch(`${BASE}/api/live?fixture=${f}`).then((r) => r.json()).catch(() => ({})),
       ]);
-      const st = state[f] || (state[f] = { prev: null, everRan: false, closedSince: 0, calledFT: false });
+      const st = state[f] || (state[f] = { prev: null, everRan: false, calledFT: false });
       const isRunning = !!(live?.running);
       const silentMs = Number(live?.silentMs || 0);
       const now = o?.hasOdds ? { home: o.home, draw: o.draw, away: o.away } : st.prev;
@@ -137,14 +152,16 @@ async function tick(fixtures, state) {
       let ev = isRunning ? readEvent(st.prev, now, silentMs, true, true) : null;
       st.prev = now || st.prev;
 
-      // Full-time is a close that STAYS shut past any ~15-min halftime break — timed, not tick-counted, so
-      // the poll interval doesn't matter, and fired exactly once. A halftime suspension reopens well before
-      // the threshold and resets the timer, so it is never mistaken for full time.
-      if (isRunning) { st.everRan = true; st.closedSince = 0; }
-      else if (st.everRan && !st.closedSince) st.closedSince = Date.now();
-      if (!ev && st.everRan && !st.calledFT && st.closedSince && Date.now() - st.closedSince >= FULLTIME_CLOSED_MS) {
+      // Full-time is anchored ONLY on the feed's positive finalisation — never on market silence alone.
+      // A mid-match feed outage also goes quiet (odds route 200s with hasOdds:false, /api/live can't confirm
+      // running), and an 18-min-silence rule would then write a FALSE full-time to Solana — breaking the one
+      // thing the Ear promises: a truthful, un-backdatable record. `live.finished` comes from the anchored
+      // score feed finalising (game_finalised / StatusId 100), which a transient outage cannot fake. We still
+      // require the match to have actually run, and fire exactly once.
+      if (isRunning) st.everRan = true;
+      if (!ev && st.everRan && !st.calledFT && live?.finished) {
         st.calledFT = true;
-        ev = { kind: "fulltime", side: null, confidence: 0.85, move: 0, evidence: "market closed and stayed shut - full time" };
+        ev = { kind: "fulltime", side: null, confidence: 0.9, move: 0, evidence: "full time - the feed has finalised and the market is shut" };
       }
       if (!ev) continue;
       const nm = await nameFor(f);

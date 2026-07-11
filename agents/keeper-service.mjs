@@ -37,6 +37,11 @@ const BASE = (process.env.BASE || arg("base", "http://127.0.0.1:3001")).replace(
  *  goal out in seconds and sweeping every dead pool ever minted first. */
 const FIXTURE = Number(arg("fixture", process.env.FIXTURE || 0)) || 0;
 const ADMIN_KEY = process.env.GAFFER_ADMIN_KEY || "";
+// The keeper route accepts either an operator key (x-gaffer-key) or the deployed agent host's own secret
+// (x-ear-key === EAR_COMMIT_SECRET). On the droplet only the latter is provisioned (Vercel redacts the
+// admin key on pull), so fall back to it — otherwise every sweep 401s and settlement silently dies.
+const EAR_SECRET = process.env.EAR_COMMIT_SECRET || "";
+const AUTH_HEADERS = ADMIN_KEY ? { "x-gaffer-key": ADMIN_KEY } : EAR_SECRET ? { "x-ear-key": EAR_SECRET } : {};
 
 const logFile = () => {
   const day = new Date().toISOString().slice(0, 10);
@@ -58,11 +63,13 @@ async function tick() {
     const url = FIXTURE ? `${BASE}/api/keeper?fixture=${FIXTURE}` : `${BASE}/api/keeper`;
     const res = await fetch(url, {
       method: "POST",
-      headers: ADMIN_KEY ? { "x-gaffer-key": ADMIN_KEY } : {},
+      headers: AUTH_HEADERS,
       signal: AbortSignal.timeout(110_000),
     });
     if (res.status === 401) {
-      console.error("keeper: unauthorized — set GAFFER_ADMIN_KEY to the value configured on the server");
+      // Loud, not swallowed: a 401 means the settler is authenticated wrong and NO pool will ever pay —
+      // exactly the silent failure that must never hide behind a heartbeat dot.
+      console.error(record({ event: "settle_auth_fail", status: 401, note: "keeper unauthorized — set EAR_COMMIT_SECRET (or GAFFER_ADMIN_KEY) to the server's value" }));
       return { fatal: true };
     }
     const body = await res.json().catch(() => ({ error: "unparseable response" }));

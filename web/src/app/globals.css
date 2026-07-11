@@ -31,6 +31,14 @@ body {
 .mono { font-family: var(--font-jbmono), ui-monospace, monospace; }
 ::-webkit-scrollbar { width: 0; height: 0; }
 
+/* The app is a mobile-first 440px column. On a wide screen (a judge on a laptop) the bare sides read as
+ * unfinished, so the backdrop gets a soft pitch-green wash and the column lifts off it like a device on a
+ * table — deliberate, not a void. No effect on phones, where the column already fills the screen. */
+@media (min-width: 640px) {
+  body { background: radial-gradient(90% 55% at 50% 0%, rgba(5, 150, 105, 0.07), transparent 55%), #EBEBE4; }
+  .app-shell { background: var(--bg); box-shadow: 0 10px 70px rgba(0, 0, 0, 0.08); }
+}
+
 @keyframes gfRing { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.6); opacity: 0 } }
 @keyframes gfPop { 0% { transform: scale(.7); opacity: 0 } 60% { transform: scale(1.06) } 100% { transform: scale(1); opacity: 1 } }
 @keyframes gfPulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }

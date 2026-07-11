@@ -704,7 +704,7 @@ export default function GafferApp() {
   const shared = { markets, label, busy, setSheet, settle, claim, collect, setDetail, cfg };
 
   return (
-    <div className="mx-auto max-w-[440px] flex flex-col" style={{ minHeight: "100dvh" }}>
+    <div className="app-shell mx-auto max-w-[440px] flex flex-col" style={{ minHeight: "100dvh" }}>
       <header className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Logo />

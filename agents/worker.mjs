@@ -70,6 +70,25 @@ function stopOne(key) {
   if (rec) { rec.stopped = true; try { rec.proc.kill(); } catch { /* already gone */ } children.delete(key); }
 }
 
+// Prompt settlement: the daily Vercel cron is only a backstop, so the moment a match leaves the live/soon
+// window (it has finished), poke the keeper for that fixture — repeatedly over ~20 minutes, because the
+// signed proof anchors a few minutes after full-time. Pools settle in minutes, not up to a day. The keeper
+// re-verifies every proof on-chain, so this can only ASK it to settle, never misdirect a payout.
+const settleQueue = new Map();   // fixtureId -> attempts left
+let watched = new Set();
+async function settleTick() {
+  const secret = process.env.EAR_COMMIT_SECRET;
+  for (const [f, left] of [...settleQueue]) {
+    try {
+      const r = await fetch(`${BASE}/api/keeper?fixture=${f}`, { headers: secret ? { "x-ear-key": secret } : {}, signal: AbortSignal.timeout(55_000) }).then((x) => x.json()).catch(() => null);
+      const paid = r?.paid ?? 0;
+      if (paid > 0) log({ event: "settled", fixture: f, paid, sigs: (r.settled || []).map((s) => s.sig).slice(0, 5) });
+    } catch { /* transient — the retry budget covers it */ }
+    const n = left - 1;
+    if (n <= 0) settleQueue.delete(f); else settleQueue.set(f, n);
+  }
+}
+
 let booted = false;
 async function reconcile() {
   let fixtures;
@@ -82,7 +101,12 @@ async function reconcile() {
   for (const key of [...children.keys()]) if (!want.has(key)) { stopOne(key); changed++; }   // match finished / dropped
   for (const key of want) if (!children.has(key)) { const [a, f] = key.split("\x00"); startOne(a, Number(f)); changed++; }
 
-  const watching = [...new Set([...children.keys()].map((k) => Number(k.split("\x00")[1])))];
+  // A fixture that was live/soon and is now gone has finished — queue its pools for prompt settlement.
+  const nowSet = new Set(fixtures);
+  for (const f of watched) if (!nowSet.has(f) && !settleQueue.has(f)) { settleQueue.set(f, 8); log({ event: "settle_enqueue", fixture: f }); }
+  watched = nowSet;
+
+  const watching = [...nowSet];
   if (changed) log({ event: "slate", watching, agents: AGENTS });
   else if (!booted && !watching.length) log({ event: "idle", note: "no live or soon fixtures — agents parked until kickoff" });
   booted = true;
@@ -95,3 +119,4 @@ for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { for (const k of
 log({ event: "boot", base: BASE, refreshSecs: REFRESH_MS / 1000, agents: AGENTS });
 await reconcile();
 setInterval(reconcile, REFRESH_MS);
+setInterval(settleTick, 3 * 60_000);   // poke the keeper for just-finished matches every 3 minutes

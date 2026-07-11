@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminOk } from "@/lib/serverConfig";
+import { adminOk, secretEq } from "@/lib/serverConfig";
 import { listMarkets, listParlays } from "@/lib/kernel";
 import { serverProgram, settleMarket, settleMarketNo, voidMarket, settleParlay, RESOLVE_GRACE_SECS } from "@/lib/settleEngine";
 
@@ -38,7 +38,11 @@ export async function POST(req: NextRequest) {
 }
 
 async function run(req: NextRequest) {
-  if (!adminOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // Cranking is permissionless in spirit (the chain re-verifies every proof), but the fee spend is gated:
+  // the daily cron / an operator via adminOk, OR the deployed agent host via its own secret — which is how
+  // the worker pokes this the moment a match finishes, so pools settle in minutes, not on the daily cron.
+  const agentOk = secretEq(req.headers.get("x-ear-key") || "", process.env.EAR_COMMIT_SECRET || "");
+  if (!agentOk && !adminOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const startedAt = Date.now();
 
   // Optional `?fixture=` — sweep one match instead of the whole chain.

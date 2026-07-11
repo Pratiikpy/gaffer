@@ -14,7 +14,7 @@ It's a **skill-and-social game** running on **valueless devnet play-coins** (a f
 
 Three surfaces, one loop:
 1. **The call → the payout.** Back a parimutuel pool ("USA to score?"). When TxLINE's data proves it, the pool self-settles on-chain and pays the winners pro-rata. One tap collects; a **Proof-of-Payout** receipt shows the amount, the odds you called it at, and an on-chain proof link.
-2. **The Frozen Window.** The minute every sportsbook *locks* its doors — a VAR review — our round *opens*. A real goal event in the TxLINE feed auto-triggers a synchronized "does it stand?" flash round; the room fills live; it settles on the real goal-count delta and pushes your whole squad.
+2. **The Frozen Window.** The minute every sportsbook *locks* its doors — the live market goes silent on a VAR review or a decisive moment — our round *opens*. That silence in the odds feed auto-triggers a synchronized flash round; the room fills live; it settles on the real goal-count delta from the signed feed and pushes your whole squad.
 3. **The Gaffer's Take.** An AI pundit reacts to real feed moments (goal / card / VAR verdict) with a one-line hot take and one-tap voice.
 
 ## How TxLINE powers the backend

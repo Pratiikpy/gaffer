@@ -13,8 +13,11 @@ export const dynamic = "force-dynamic";
 
 const PROGRAM_ID = new PublicKey((idl as any).address);
 
-/** The public number: everything carried in so far. */
-export async function GET() {
+/** GET is the public number — everything carried in so far — UNLESS it is the daily cron (Vercel issues a
+ * GET carrying the CRON_SECRET bearer), in which case it runs the sweep. Without this, nothing triggered
+ * the sweep in production and the rollover pot the UI shows never filled. POST still sweeps for operators. */
+export async function GET(req: NextRequest) {
+  if (adminOk(req)) return sweep(req);   // authenticated GET === the daily cron → do the sweep
   return NextResponse.json(await rolloverPot());
 }
 
@@ -25,7 +28,9 @@ export async function GET() {
  * person's money, so it is skipped — we never roll a fan's payout into tomorrow's prize. The rent-exempt
  * minimum stays behind too (it's the account's, not the pot's). Idempotent per market via `swept`.
  */
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) { return sweep(req); }
+
+async function sweep(req: NextRequest) {
   try {
     if (!adminOk(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     const conn = new Connection(RPC, "confirmed");

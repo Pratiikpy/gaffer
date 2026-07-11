@@ -4,6 +4,14 @@
     {
       "path": "/api/keeper",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/rollover",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/recap/push",
+      "schedule": "0 9 * * *"
     }
   ]
 }

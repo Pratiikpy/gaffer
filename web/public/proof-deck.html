@@ -191,8 +191,8 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
         <figcaption><b>The matchday lobby — live.</b> Captured during a real live match: the <b>Fans-vs-Market</b> read moving off the live odds, the Drama Meter, the free call, Ask-your-own, live pools, Hi-Lo, the knockout board — and the full 14-feature hub.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="/proof-images/live-live.png" alt="The Live tab during a live match: Match Centre LIVE, The Gaffer's Ear, and The Frozen Window">
-        <figcaption><b>Match Centre &amp; The Gaffer's Ear — live.</b> A real match in play: the Ear reads it from the live market and names the moment before the score feed catches up. The Frozen Window opens on a VAR check or market silence.</figcaption>
+        <img src="/proof-images/ear-goal-live.png" alt="The Gaffer's Ear calling a real goal live: GOAL — Argentina 98%, with an on-chain receipt link">
+        <figcaption><b>The Ear called a real goal — live, on-chain.</b> During Argentina v Switzerland the Ear read a 25-pt market jump and called <b>GOAL — Argentina, 98%</b>, anchoring it on Solana <b>before the score feed carried it</b> — the "receipt" link opens the real devnet transaction (<a href="https://explorer.solana.com/tx/3fVdNyJdMi8hfAYBows27paXRe9HWPQnQXAcunAoVoVPFrRekakrmqURGMchsMHWScyZQWfiPy3rFC5VAY2bBTpn?cluster=devnet" target="_blank" rel="noopener">confirmed, status Success</a>). Not a mock — a genuine live call.</figcaption>
       </figure>
       <figure class="shot">
         <img src="/proof-images/you.png" alt="The You tab: rank, league, run grid, and how GAFFER makes money">
@@ -280,7 +280,8 @@ node agents/ear.mjs --selftest
       <div class="rec"><div class="k">LATCH kernel (devnet)</div><div class="v"><a href="https://explorer.solana.com/address/HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG?cluster=devnet" target="_blank" rel="noopener">HBJKUPdL…gwhcG</a></div></div>
       <div class="rec"><div class="k">TxLINE oracle program (devnet)</div><div class="v"><a href="https://explorer.solana.com/address/6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J?cluster=devnet" target="_blank" rel="noopener">6pW64gN1…5wyP2</a></div></div>
       <div class="rec"><div class="k">Live open pools + pot</div><div class="v"><a href="https://gaffer-cyan.vercel.app/api/markets" target="_blank" rel="noopener">GET /api/markets</a></div></div>
-      <div class="rec"><div class="k">The Gaffer's Ear feed</div><div class="v"><a href="https://gaffer-cyan.vercel.app/api/ear-calls?fixture=18213979" target="_blank" rel="noopener">GET /api/ear-calls</a></div></div>
+      <div class="rec"><div class="k">The Gaffer's Ear feed</div><div class="v"><a href="https://gaffer-cyan.vercel.app/api/ear-calls?fixture=18222446" target="_blank" rel="noopener">GET /api/ear-calls</a></div></div>
+      <div class="rec"><div class="k">A real live Ear goal-call, on-chain</div><div class="v"><a href="https://explorer.solana.com/tx/3fVdNyJdMi8hfAYBows27paXRe9HWPQnQXAcunAoVoVPFrRekakrmqURGMchsMHWScyZQWfiPy3rFC5VAY2bBTpn?cluster=devnet" target="_blank" rel="noopener">GOAL — Argentina, 98% · tx 3fVdNyJd…bBTpn</a></div></div>
       <div class="rec"><div class="k">Kernel test suite</div><div class="v">npm run test:kernel → 38/38</div></div>
       <div class="rec"><div class="k">TxLINE endpoints used</div><div class="v">odds/snapshot · scores/historical · scores/stat-validation · fixtures/snapshot · guest auth + on-chain subscribe</div></div>
     </div>

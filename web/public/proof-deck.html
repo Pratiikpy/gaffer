@@ -138,6 +138,27 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
     <p>Every sports app makes you a customer of a house that profits when you lose — and the top complaint is always <b>"they won't pay me."</b> GAFFER removes the house. Calls go into a parimutuel pool; everyone who's right splits the pot, and <b>the match result releases the money</b> — verified against official data, on-chain, with no operator who <em>can</em> refuse you.</p>
   </div>
 
+  <!-- LIVE USAGE -->
+  <section class="section">
+    <div class="eyebrow">Live usage · recomputed from chain</div>
+    <h2>Not a claim — a number you can recompute yourself.</h2>
+    <p class="lede">The whole parimutuel system, exercised multi-user on Solana devnet. Every figure is read straight from the chain — not a stored counter. Reproduce them with one command, or spot-check any signature on Explorer.</p>
+    <div class="proof-bar">
+      <div class="proof-stat"><strong id="u-wallets">244</strong><span>distinct wallets</span></div>
+      <div class="proof-stat"><strong id="u-settled">94</strong><span>pools settled via <code>validate_stat</code> CPI</span></div>
+      <div class="proof-stat"><strong id="u-claims">238</strong><span>on-chain claims (payouts)</span></div>
+      <div class="proof-stat"><strong id="u-joins">464</strong><span>joins across the tournament</span></div>
+    </div>
+    <p class="lede" style="margin-top:16px;font-size:14px">Verify it yourself, zero credentials: <code>node scripts_judge-verify-usage.mjs</code> — or read the live figures at <a href="https://gaffer-cyan.vercel.app/api/stats" target="_blank" rel="noopener"><code>/api/stats</code></a>. Nothing here is self-reported.</p>
+  </section>
+  <script>
+    fetch("/api/stats").then(function(r){return r.json()}).then(function(d){
+      if(!d||d.wallets==null)return;
+      var set=function(id,v){var el=document.getElementById(id);if(el)el.textContent=String(v)};
+      set("u-wallets",d.wallets);set("u-settled",d.settled);set("u-claims",d.claims);set("u-joins",d.joins);
+    }).catch(function(){});
+  </script>
+
   <!-- THREE TRACKS -->
   <section class="section">
     <div class="eyebrow">One build, three tracks</div>
@@ -213,6 +234,115 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
     </div>
   </section>
 
+  <!-- EVERY FEATURE, LIVE -->
+  <style>
+    .featgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}
+    @media(max-width:860px){.featgrid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:560px){.featgrid{grid-template-columns:1fr}}
+    .feat{border:1px solid var(--line);background:var(--card);border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+    .feat .thumb{background:#0e0f10;border-bottom:1px solid var(--line);max-height:230px;overflow:hidden;display:flex;align-items:flex-start;justify-content:center}
+    .feat .thumb img{width:100%;height:auto;display:block}
+    .feat .body{padding:15px 16px 16px}
+    .feat h4{margin:0 0 3px;font-size:16px;font-weight:800;letter-spacing:-.01em}
+    .feat .kind{font:700 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--greenb);display:block;margin-bottom:7px}
+    .feat p{margin:0;font-size:13.5px;line-height:1.5;color:#3a3f45}
+    .feat .txl{margin-top:10px;font:600 11px/1.45 var(--mono);color:var(--muted);border-top:1px dashed var(--line);padding-top:9px}
+    .feat .txl b{color:var(--greenb)}
+    .feat .chain{margin-top:9px;display:inline-flex;align-items:center;gap:6px;font:700 11px/1 var(--mono);letter-spacing:.04em;color:#fff;background:var(--gd);border-radius:999px;padding:7px 11px;text-decoration:none}
+    .feat .chain:hover{background:#000}
+  </style>
+  <section class="section">
+    <div class="eyebrow">Every feature · end to end · live</div>
+    <h2>Fourteen features, each running on TxLINE — and here's exactly how.</h2>
+    <p class="lede">Every card is a real feature of the live app, captured during a match. Under each one: the small print of <b>how TxLINE powers it</b>, and — where the feature touches Solana — a link straight to the on-chain receipt.</p>
+    <div class="featgrid">
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/trackrecord-graded.png" alt="The Gaffer's Ear track record — 4/5 goal calls confirmed, 80%"></div><div class="body">
+        <span class="kind">Trading · agent · graded</span><h4>The Gaffer's Ear</h4>
+        <p>An autonomous agent that names the goal the instant the market lurches — before the score feed carries it. On Argentina 3–1 Switzerland it went <b>4/5 goal calls confirmed — 80%</b>, graded against the signed final score.</p>
+        <div class="txl">TxLINE → reads the live <b>de-margined odds</b> to call it; grades each call ✓/✗ against the <b>signed final score</b>.</div>
+        <a class="chain" href="https://explorer.solana.com/tx/3fVdNyJdMi8hfAYBows27paXRe9HWPQnQXAcunAoVoVPFrRekakrmqURGMchsMHWScyZQWfiPy3rFC5VAY2bBTpn?cluster=devnet" target="_blank" rel="noopener">◎ on-chain call ↗</a>
+        <a class="chain" href="https://gaffer-cyan.vercel.app/api/ear-record" target="_blank" rel="noopener" style="background:#0e9f5b">✓ live track record ↗</a>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/swing.png" alt="The Swing"></div><div class="body">
+        <span class="kind">Consumer · signature metric</span><h4>The Swing</h4>
+        <p>The one number we own — "Argentina +58" — and a momentum graph read from the market, not the event feed. The tall bar is a goal.</p>
+        <div class="txl">TxLINE → sampled <b>odds movement</b> becomes the momentum bars &amp; the net swing.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/today-live.png" alt="Live pools"></div><div class="body">
+        <span class="kind">Prediction Markets</span><h4>Live pools</h4>
+        <p>A parimutuel pot — no house. Fans split it when they're right; it pays the second the result lands.</p>
+        <div class="txl">TxLINE → the pool settles by a CPI into <b>validate_stat</b>, paying only on the signed proof.</div>
+        <a class="chain" href="https://explorer.solana.com/tx/56HiPn9xxFR6aGWYdWBkpXeMRfSo6YKVvrfYk5YJcZNA6DpKUfwft8gwwepWdyosxeDYfFaonHPaUGk3BeT9fXXM?cluster=devnet" target="_blank" rel="noopener">◎ settle (validate_stat) ↗</a>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/askown.png" alt="Ask your own"></div><div class="body">
+        <span class="kind">Prediction Markets</span><h4>Ask your own</h4>
+        <p>Type a market in plain English — "Argentina to win 5+ corners" — and if the data can prove it, a pool opens.</p>
+        <div class="txl">TxLINE → your sentence compiles to a monotone predicate over a <b>TxLINE stat key</b>.</div>
+        <a class="chain" href="https://explorer.solana.com/tx/44j9MVEWEb3wxMcxjzQmPPex74gUgM2zsEriLLGgV9LobnvHnUskq2TzKNzNtXgqimVEjJSssQgmnTdkFHdqdBLx?cluster=devnet" target="_blank" rel="noopener">◎ create market ↗</a>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/hilo-reveal.png" alt="Hi-Lo"></div><div class="body">
+        <span class="kind">Consumer · daily game</span><h4>Hi-Lo</h4>
+        <p>More or fewer than the last match? Call the next stat, build a streak, share your run across all 104 games.</p>
+        <div class="txl">TxLINE → every question &amp; answer is a real <b>match stat</b> from the feed.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/fansvsmarket.png" alt="Fans vs the Market"></div><div class="body">
+        <span class="kind">Consumer · signature toy</span><h4>Fans vs the Market</h4>
+        <p>The whole room's call, put head-to-head with the live market. Back the fans or back the book.</p>
+        <div class="txl">TxLINE → the market bar is the live <b>de-margined 1X2 implied %</b>.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/frozen.png" alt="The Frozen Window"></div><div class="body">
+        <span class="kind">New interaction model</span><h4>The Frozen Window</h4>
+        <p>The minute every sportsbook freezes on a VAR check or goes silent, our round opens — and winners are paid before the commentator finishes.</p>
+        <div class="txl">TxLINE → fires on <b>market silence</b>; settles on goal-count deltas from the signed feed.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/multiuser.png" alt="Multi-user squad"></div><div class="body">
+        <span class="kind">Consumer · social · multi-user</span><h4>Squad · Duels · Round Table</h4>
+        <p>Two fans, one live board: group chat, Fade Duels (opposite sides of a call), and a live draft of the surviving nations.</p>
+        <div class="txl">TxLINE → every call, duel and draft result is scored from the <b>signed match data</b>.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/knockout.png" alt="The knockout board"></div><div class="body">
+        <span class="kind">Consumer</span><h4>The knockout board</h4>
+        <p>Every match as it moves LIVE → full-time, the whole tournament at a glance.</p>
+        <div class="txl">TxLINE → straight from the normalised <b>fixtures + live-state feed</b>.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/relive.png" alt="Relive a match"></div><div class="body">
+        <span class="kind">Consumer</span><h4>Relive a match</h4>
+        <p>Any finished game replayed as a 3-minute drama — anonymised, no names until the end.</p>
+        <div class="txl">TxLINE → rebuilt from the <b>signed historical tick stream</b> of the real match.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/feat/sharecard.png" alt="Shareable card"></div><div class="body">
+        <span class="kind">Consumer · growth loop</span><h4>The "I called it" card</h4>
+        <p>Win, and one tap drops a "+X paid" card in the group chat — the receipt that travels, proof one tap behind it.</p>
+        <div class="txl">TxLINE → the win it celebrates was <b>settled on the signed final score</b>.</div>
+        <a class="chain" href="https://explorer.solana.com/tx/3rye646WpYEt2xKdrJUiMePrxPM6aDjgnCWVweWx4tkvvpBLfVWF5meWq8rvSXNkxpqDsisTscPxx3BcccJRn1Rw?cluster=devnet" target="_blank" rel="noopener">◎ payout ↗</a>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/onboarding.png" alt="Daily free call"></div><div class="body">
+        <span class="kind">Consumer · daily ritual</span><h4>Daily free call</h4>
+        <p>One free call a day — "Goal before half-time?" — no signup, no wallet. Miss none, keep your run alive.</p>
+        <div class="txl">TxLINE → graded against the <b>signed final score</b> after full-time.</div>
+      </div></div>
+
+      <div class="feat"><div class="thumb"><img src="/proof-images/you.png" alt="Your cup"></div><div class="body">
+        <span class="kind">Consumer · retention &amp; business</span><h4>Your cup &amp; the money</h4>
+        <p>Rank for life, the weekly league, your run grid — and a transparent "how GAFFER makes money": 0% house cut today, capped at 5%.</p>
+        <div class="txl">TxLINE → the ledger is built only from <b>graded, settled outcomes</b>.</div>
+      </div></div>
+
+    </div>
+  </section>
+
   <!-- TRUSTLESS SETTLEMENT -->
   <section class="section">
     <div class="eyebrow">Prediction Markets &amp; Settlement</div>
@@ -232,6 +362,11 @@ web/src/lib/settleEngine.ts
 <span class="c"># reproduce the 38/38 devnet suite</span>
 npm run test:kernel
 
+<span class="c"># recompute the live usage from chain (zero creds)</span>
+node scripts_judge-verify-usage.mjs
+<span class="c"># verify one trustless settlement + payout</span>
+node scripts_judge-verify-settlement.mjs
+
 <span class="c"># the LATCH kernel, on devnet</span>
 <span class="g">HBJKUPdL…gwhcG</span>
 <span class="c"># the TxLINE oracle it verifies against</span>
@@ -249,7 +384,7 @@ npm run test:kernel
       <div class="card">
         <h3>Deterministic, self-tested, on-chain</h3>
         <p>A pure classifier (<code>agents/ear.mjs</code>): a large one-sided implied-probability jump — absolute <b>or</b> relative, so a favourite extending its lead isn't missed — is a goal; sustained market silence is a stoppage; full time is anchored only on the feed's positive finalisation, never on silence, so a feed outage can't write a false result.</p>
-        <p>Every call is committed on-chain the instant it's made, with an Explorer receipt. Self-test: <b>11/11</b>.</p>
+        <p>Every call is committed on-chain the instant it's made, with an Explorer receipt. Self-test: <b>11/11</b>. And it grades itself: on Argentina 3–1 Switzerland the Ear went <b>4/5 goal calls confirmed — 80%</b> against the signed final score, exposed as a live signal feed at <a href="https://gaffer-cyan.vercel.app/api/ear-record" target="_blank" rel="noopener"><code>/api/ear-record</code></a>.</p>
         <pre><span class="c"># reproduce the Ear's logic gate</span>
 node agents/ear.mjs --selftest
   <span class="g">✓ favourite goal caught by relative jump</span>

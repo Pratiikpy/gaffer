@@ -5,7 +5,7 @@ import { BrowserParlay } from "@/lib/parlayClient";
 import { useAppWallet } from "@/lib/walletCtx";
 import { GAMES } from "@/lib/features";
 import { playPaid, hapticPaid, soundOn, setSoundOn } from "@/lib/sound";
-import { detectLang, shareWin, shareStreak } from "@/lib/i18n";
+import { detectLang, shareWin, shareStreak, winCardPath } from "@/lib/i18n";
 import { canInstall, onInstallable, promptInstall, isIOS, isStandalone, setBadge } from "@/lib/install";
 import MysteryMatch from "./MysteryMatch";
 import RoundTable from "./RoundTable";
@@ -1196,16 +1196,22 @@ function KnockoutBoard({ fixtures, onSelect }: { fixtures: any[]; onSelect: (id:
   );
 }
 
-/** Drama Meter (L3) — narrative bands read from the live TxLINE market: the tighter home vs away, the
- * more it's "on". Pre-match tension from the real de-margined 1X2; in-play it rides the swings the same
- * way. Never a fabricated number — the band is a plain function of the live implied %. */
-function DramaMeter({ fixtureId }: { fixtureId: number }) {
+/** THE SWING (L3) — the match read from the market's own movement, and the one number we own.
+ *
+ * Every other app draws a momentum graph from event data (shots, attacks). We draw one from the de-margined
+ * betting line: each bar is the line moving in that interval — up = home surging, down = away — so the graph
+ * lights up the instant the market prices a goal, before the score feed carries it. "Argentina +23" is the
+ * net shift since kickoff: a nameable, screenshot-able number, the way fans quote a Sofascore rating. The
+ * tension band rides underneath. Never fabricated — every value is a plain function of the live implied %. */
+function DramaMeter({ fixtureId, home, away }: { fixtureId: number; home?: string; away?: string }) {
   const [o, setO] = useState<any>(null);
-  // Poll so the band actually "rides the swings" as the copy promises — a one-shot fetch would freeze the
-  // meter mid-match and contradict its own "live market" label.
+  const [sw, setSw] = useState<any>(null);
   useEffect(() => {
     let live = true;
-    const read = () => fetch(`/api/odds/${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setO(d); }).catch(() => {});
+    const read = () => {
+      fetch(`/api/odds/${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setO(d); }).catch(() => {});
+      fetch(`/api/momentum?fixture=${fixtureId}`).then((r) => r.json()).then((d) => { if (live) setSw(d); }).catch(() => {});
+    };
     read();
     const t = POLL ? setInterval(read, 15_000) : null;
     return () => { live = false; if (t) clearInterval(t); };
@@ -1213,11 +1219,39 @@ function DramaMeter({ fixtureId }: { fixtureId: number }) {
   if (!o || !o.hasOdds) return null;
   const gap = Math.abs((o.home || 0) - (o.away || 0));
   const band = gap <= 8 ? { t: "GOING TO THE WIRE", c: "#dc2626", w: 92 } : gap <= 18 ? { t: "WOBBLING", c: "#f59e0b", w: 68 } : gap <= 30 ? { t: "IN THE BALANCE", c: "#059669", w: 46 } : { t: "CRUISING", c: "#6b7280", w: 24 };
+
+  const H = home || "Home", A = away || "Away";
+  const leaderName = sw?.leader === "home" ? H : sw?.leader === "away" ? A : null;
+  const series: any[] = Array.isArray(sw?.series) ? sw.series : [];
+  const bars = series.filter((_, i) => i > 0);        // first point has no delta
+  // Scale bars to the graph: a goal-sized ~40pt lurch fills half the height; tiny drifts stay readable.
+  const HALF = 22, scale = (d: number) => Math.max(2, Math.min(HALF, Math.abs(d) * 0.55));
   return (
     <div className="mt-4 bg-white border border-[var(--line)] rounded-2xl p-4">
-      <div className="flex items-center justify-between"><span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">Drama meter</span><span className="mono text-[10px] font-extrabold" style={{ color: band.c }}>{band.t}</span></div>
-      <div className="mt-2.5 h-2.5 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full transition-all duration-700" style={{ width: `${band.w}%`, background: band.c }} /></div>
-      <div className="mono text-[9px] text-[var(--muted)] mt-2">Read from the live market — the tighter the odds, the more it&apos;s on.</div>
+      <div className="flex items-center justify-between">
+        <span className="mono text-[10px] tracking-widest uppercase text-[var(--muted)]">The Swing</span>
+        {leaderName
+          ? <span className="mono text-[11px] font-extrabold text-[var(--ink)]">{leaderName} <span className="text-[var(--green)]">+{sw.lead}</span></span>
+          : <span className="mono text-[10px] font-extrabold text-[var(--muted)]">LEVEL</span>}
+      </div>
+      {bars.length >= 2 ? (
+        <>
+          <svg viewBox={`0 0 ${Math.max(bars.length * 6, 12)} ${HALF * 2 + 4}`} preserveAspectRatio="none" className="mt-2.5 w-full h-[52px]">
+            <line x1="0" y1={HALF + 2} x2={Math.max(bars.length * 6, 12)} y2={HALF + 2} stroke="#ECEAE3" strokeWidth="1" />
+            {bars.map((p: any, i: number) => {
+              const h = scale(p.dHome), up = p.dHome >= 0;
+              return <rect key={i} x={i * 6 + 1} y={up ? HALF + 2 - h : HALF + 2} width={4} height={h} rx={1} fill={up ? "#059669" : "#dc2626"} />;
+            })}
+          </svg>
+          <div className="mono text-[9px] text-[var(--muted)] mt-1.5">Every bar is the market moving — <span style={{ color: "#059669" }}>up = {H}</span>, <span style={{ color: "#dc2626" }}>down = {A}</span>. {sw.intensity > 0 ? `${sw.intensity} pts of swing so far.` : ""}</div>
+        </>
+      ) : (
+        <div className="mono text-[9px] text-[var(--muted)] mt-2">Reading the market — the graph fills in as the line moves.</div>
+      )}
+      <div className="mt-2.5 flex items-center gap-2">
+        <div className="flex-1 h-2 rounded-full bg-[#FAFAF7] overflow-hidden"><div className="h-full transition-all duration-700" style={{ width: `${band.w}%`, background: band.c }} /></div>
+        <span className="mono text-[9px] font-extrabold shrink-0" style={{ color: band.c }}>{band.t}</span>
+      </div>
     </div>
   );
 }
@@ -1742,7 +1776,7 @@ function Today({ markets, loading, label, busy, spinUp, askMarket, onGoal, setSh
 
       {!matchOn && lobby}
       {selectedFixture && <MarketRead fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
-      {selectedFixture && <DramaMeter fixtureId={selectedFixture} />}
+      {selectedFixture && <DramaMeter fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} />}
       {(() => { const sf = fixtures.find((f: any) => f.fixtureId === selectedFixture); return sf?.state === "finished" ? <MatchRecap fixtureId={selectedFixture} home={fx(selectedFixture).home} away={fx(selectedFixture).away} onRelive={onRelive} /> : null; })()}
 
       {DEV && <button disabled={busy === "spin"} onClick={() => spinUp(selectedFixture)} className="mt-4 w-full h-12 rounded-2xl border-2 border-dashed border-[var(--line)] text-[var(--muted)] font-semibold disabled:opacity-50">{busy === "spin" ? "Spinning up…" : `+ Spin up a pool (${selName})`}</button>}
@@ -2415,6 +2449,8 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
   const share = async () => {
     // N3 — the card speaks the reader's language. Mexico is half this market.
     const lang = detectLang();
+    // The card link that unfurls the visual "+X paid" image (via /win's OG) — this is what actually travels.
+    const cardUrl = `https://gaffer-cyan.vercel.app${winCardPath({ amount: paid.amount, question: paid.q, calledAt: paid.calledAt ?? null, mult: paid.mult ?? null, stake: stake > 0 ? stake : null, lang })}`;
     const text = shareWin(lang, {
       stake: stake > 0 ? stake : undefined,
       payout: paid.amount,
@@ -2423,11 +2459,11 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
       mult: paid.mult ?? null,
       settled: settled ? settled.replace(/^settled /, "") : null,
       record: rec && rec.wins + rec.losses > 0 ? { w: rec.wins, l: rec.losses } : null,
-      url: "gaffer-cyan.vercel.app",
+      url: cardUrl,
     });
     try {
-      if ((navigator as any).share) await (navigator as any).share({ text });
-      else { await navigator.clipboard.writeText(text); flash?.("Receipt copied — paste it in the chat"); }
+      if ((navigator as any).share) await (navigator as any).share({ text, url: cardUrl });
+      else { await navigator.clipboard.writeText(text); flash?.("Card link copied — paste it in the chat"); }
     } catch { /* dismissed */ }
   };
 
@@ -2955,13 +2991,20 @@ function GafferTake({ moment, home, away }: { moment: { kind: string; who: strin
 /** THE GAFFER'S EAR — the autonomous agent that reads events (goal / stoppage / full-time) from the live
  * market alone, before the score feed carries them. Each call is committed on-chain the instant it's made;
  * we show the call and a link to that proof. Hidden until it has actually called something. */
-type EarCall = { kind: string; side: string | null; team: string | null; confidence: number; evidence: string; sig: string | null; ts: number };
+type EarCall = { kind: string; side: string | null; team: string | null; confidence: number; evidence: string; sig: string | null; ts: number; correct?: boolean | null; graded?: boolean };
+type EarRec = { goalCalls: number; goalConfirmed: number; goalHitRate: number | null; gradedFixtures: number };
 function GafferEar({ fixtureId }: { fixtureId: number }) {
   const [calls, setCalls] = useState<EarCall[]>([]);
+  const [rec, setRec] = useState<EarRec | null>(null);
   useEffect(() => {
     if (!fixtureId) return;
     let on = true;
-    const read = () => fetch(`/api/ear-calls?fixture=${fixtureId}`).then((r) => r.json()).then((d) => { if (on) setCalls(d.calls || []); }).catch(() => {});
+    // Per-fixture calls now carry their grade (✓/✗) once the match finalises; the overall record is the
+    // headline hit-rate. Both come from /api/ear-record, which grades only against TxLINE's signed score.
+    const read = () => {
+      fetch(`/api/ear-record?fixture=${fixtureId}`).then((r) => r.json()).then((d) => { if (on) setCalls(d.calls || []); }).catch(() => {});
+      fetch(`/api/ear-record`).then((r) => r.json()).then((d) => { if (on) setRec(d); }).catch(() => {});
+    };
     read();
     const t = POLL ? setInterval(read, 15_000) : null;
     return () => { on = false; if (t) clearInterval(t); };
@@ -2981,6 +3024,19 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
         <span className="mono text-[10px] tracking-widest uppercase text-[var(--greenb)]">The Gaffer&apos;s Ear</span>
       </div>
       <div className="mono text-[9px] text-white/40 mt-1">reads the match from the live market — before the score feed catches up. every call is stamped and public.</div>
+      {/* Track record — the Ear's calls graded against TxLINE's signed final scores. Shows the real hit-rate
+          once any match has finalised; before that, a trust statement rather than an empty "0/0". This is the
+          Trading-track answer to "does the signal predict the outcome" — it does, and here's the receipt. */}
+      {rec && rec.goalCalls > 0 ? (
+        <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-black/25 px-2.5 py-1.5">
+          <span className="mono text-[9px] tracking-wider uppercase text-white/45">Track record</span>
+          <span className="text-[12px] font-bold text-white">{rec.goalConfirmed}/{rec.goalCalls} goal calls confirmed</span>
+          {rec.goalHitRate != null && <span className="mono text-[10px] text-[var(--greenb)]">{Math.round(rec.goalHitRate * 100)}%</span>}
+          <span className="mono text-[9px] text-white/35">· {rec.gradedFixtures} match{rec.gradedFixtures === 1 ? "" : "es"} graded</span>
+        </div>
+      ) : (
+        <div className="mt-2.5 mono text-[9px] text-white/35">every call grades ✓/✗ against the signed final score at full time.</div>
+      )}
       {/* Always on the Live tab, even before kickoff — the flagship should explain itself, not vanish when the
           feed is quiet. When it hasn't called anything yet it says so honestly rather than inventing a moment. */}
       {!calls.length ? (
@@ -2997,6 +3053,8 @@ function GafferEar({ fixtureId }: { fixtureId: number }) {
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-bold leading-tight">{headline(c)}</span>
                 <span className="mono text-[9px] text-white/40">{(c.confidence * 100) | 0}%</span>
+                {c.graded && c.correct === true && <span className="mono text-[9px] font-bold text-[var(--greenb)]" title="confirmed by the signed final score">✓</span>}
+                {c.graded && c.correct === false && <span className="mono text-[9px] font-bold text-white/45" title="not borne out by the final score">✗</span>}
               </div>
               <div className="text-[11px] text-white/55 leading-snug mt-0.5">{c.evidence}</div>
             </div>

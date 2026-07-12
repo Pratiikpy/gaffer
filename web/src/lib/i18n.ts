@@ -56,6 +56,20 @@ export function shareWin(lang: Lang, opts: { stake?: number; payout: number; que
   return `${s.calledIt} — ${pair}“${opts.question}”. ${stamp}${fast}${rec}${s.paidInstant} 🟢 ${opts.url}`;
 }
 
+/** The path to a shareable "I called it" card for one win. Pasted into a chat it unfurls the visual
+ * "+X paid" card (via /win's OG image) — the format that actually travels ("$X → pays $Y"). A click lands
+ * the viewer on the card with a Play-free CTA: the Sleeper/SportyBet invite loop, on a real payout. */
+export function winCardPath(opts: { amount: number | string; question: string; calledAt?: number | null; mult?: number | null; stake?: number | null; lang?: Lang }): string {
+  const q = new URLSearchParams();
+  q.set("amount", String(opts.amount));
+  if (opts.question) q.set("q", opts.question.slice(0, 80));
+  if (opts.calledAt != null) q.set("called", String(opts.calledAt));
+  if (opts.mult != null) q.set("mult", opts.mult.toFixed(2));
+  if (opts.stake != null && opts.stake > 0) q.set("stake", String(opts.stake));
+  if (opts.lang === "es") q.set("lang", "es");
+  return `/win?${q.toString()}`;
+}
+
 /** The streak grid caption, in either language. The grid itself is language-free by design. */
 export function shareStreak(lang: Lang, streak: number, alivePct: number | null): string {
   const s = t(lang);

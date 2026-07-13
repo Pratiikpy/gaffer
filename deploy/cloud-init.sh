@@ -25,7 +25,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=GAFFER_API=https://gaffer-cyan.vercel.app
+Environment=GAFFER_API=https://www.mygaffer.xyz
 Environment=INTERVAL=45
 Environment=REFRESH_SECS=300
 # EAR_COMMIT_SECRET authenticates the Ear's on-chain commit and the worker's settle poke (must match the
@@ -54,7 +54,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=GAFFER_API=https://gaffer-cyan.vercel.app
+Environment=GAFFER_API=https://www.mygaffer.xyz
 Environment=EAR_COMMIT_SECRET=${EAR_COMMIT_SECRET:-}
 WorkingDirectory=/opt/gaffer
 ExecStart=/usr/bin/node /opt/gaffer/agents/keeper-service.mjs --interval 20

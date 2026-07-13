@@ -9,7 +9,7 @@ import FarcasterReady from "./ready";
  * its splash. Money identity remains the wallet, exactly as on web and in Telegram.
  */
 
-const BASE = process.env.NEXT_PUBLIC_BASE_URL || "https://gaffer-cyan.vercel.app";
+const BASE = process.env.NEXT_PUBLIC_BASE_URL || "https://www.mygaffer.xyz";
 
 const embed = {
   version: "1",

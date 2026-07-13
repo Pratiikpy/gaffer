@@ -4,7 +4,7 @@
 
 ### The World Cup prediction game you already play with your mates — now real, and the payout is one no one can refuse.
 
-[![Play it live](https://img.shields.io/badge/▶_Play_it_live-gaffer--cyan.vercel.app-05C46B?style=for-the-badge)](https://gaffer-cyan.vercel.app)
+[![Play it live](https://img.shields.io/badge/▶_Play_it_live-www.mygaffer.xyz-05C46B?style=for-the-badge)](https://www.mygaffer.xyz)
 
 ![Solana](https://img.shields.io/badge/Solana-devnet-9945FF?logo=solana&logoColor=white)
 ![Anchor](https://img.shields.io/badge/Anchor-0.31-1d1d1f)
@@ -60,7 +60,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 
 ## ▶️ Play it in 60 seconds
 
-1. Open **[gaffer-cyan.vercel.app](https://gaffer-cyan.vercel.app)** — no sign-up, no install.
+1. Open **[www.mygaffer.xyz](https://www.mygaffer.xyz)** — no sign-up, no install.
 2. **Today** → lock in the free daily call (your streak starts).
 3. **Cash → Add funds** — tops up your in-app balance with **free devnet play-coins** (a faucet, not a purchase).
 4. Back a pool (*"USA to score?"*), watch the projected payout move as others take the other side.
@@ -102,7 +102,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 - **Seven agents live 24/7** on a DigitalOcean host, discovering fixtures themselves and reading the signed feed — **the Ear** (events inferred from the market, committed on-chain), the keeper, sharp-move detector, market-maker, CLV tracker, arena, and the Read analyst — with kept logs (`agents/`, `deploy/`). The Ear's on-chain proof: a Memo like `GAFFER-EAR|18172379|goal|home|91|…` lands on devnet the instant it calls, verifiable by block time.
 - **The Frozen Window, load-tested** — 24 concurrent callers into one round, zero failures, correct tally, settled on the real goal-count delta.
 - **Deployed and playable** at the live URL above, backed by hosted Postgres and a dedicated RPC.
-- **Live usage at scale — recomputed from chain, not a self-reported counter.** The parimutuel kernel has **244 distinct wallets, 94 pools settled via `validate_stat`, and 238 on-chain claims (payouts)** across the tournament — the whole create → join → settle → claim lifecycle, exercised multi-user. Reproduce every number yourself, zero credentials: `cd web && node scripts_judge-verify-usage.mjs`. Or verify one **trustless settlement** end-to-end (the `validate_stat` CPI into TxLINE + the winner's payout): `cd web && node scripts_judge-verify-settlement.mjs`. Live figures also served at [`/api/stats`](https://gaffer-cyan.vercel.app/api/stats).
+- **Live usage at scale — recomputed from chain, not a self-reported counter.** The parimutuel kernel has **244 distinct wallets, 94 pools settled via `validate_stat`, and 238 on-chain claims (payouts)** across the tournament — the whole create → join → settle → claim lifecycle, exercised multi-user. Reproduce every number yourself, zero credentials: `cd web && node scripts_judge-verify-usage.mjs`. Or verify one **trustless settlement** end-to-end (the `validate_stat` CPI into TxLINE + the winner's payout): `cd web && node scripts_judge-verify-settlement.mjs`. Live figures also served at [`/api/stats`](https://www.mygaffer.xyz/api/stats).
 - **Ask-your-own markets work in plain English** — a fan types "Bosnia to be booked 2+ yellow cards" and it compiles to a monotone over-threshold predicate on a TxLINE stat key, then opens as an on-chain pool. The grammar validates against the live stat (it rejects a bet that already happened, and guides one it can't parse). Nobody else lets a fan mint a market by typing.
 
 > **On the live feed, honestly:** TxODDS's devnet feed streams **odds in-running** (the market is genuinely live — prices move to the second), but it does **not** stream live *score events* — the score stream fills in only once a match is finalised. So the live surfaces run on the live odds (the market read, the Drama Meter, the Blackout that arms off real market silence), and score-settled pools settle on the signed score data once it's anchored. Nothing fabricates a scoreline it can't prove.
@@ -128,11 +128,11 @@ npm run dev                  # http://localhost:3000
 **Autonomous agents** (`/agents`, no deps — they call the deployed API):
 ```bash
 # run the whole suite against the live slate (discovers fixtures itself)
-GAFFER_API=https://gaffer-cyan.vercel.app node agents/worker.mjs
+GAFFER_API=https://www.mygaffer.xyz node agents/worker.mjs
 # or the flagship Ear on one match — reads events from the market, live
-GAFFER_API=https://gaffer-cyan.vercel.app node agents/ear.mjs 18213979
+GAFFER_API=https://www.mygaffer.xyz node agents/ear.mjs 18213979
 # after full-time, grade the Ear against the signed feed
-GAFFER_API=https://gaffer-cyan.vercel.app node agents/ear.mjs --score 18213979
+GAFFER_API=https://www.mygaffer.xyz node agents/ear.mjs --score 18213979
 ```
 `deploy/` provisions these on a DigitalOcean droplet under systemd (`Restart=always`) — see `deploy/README.md`.
 

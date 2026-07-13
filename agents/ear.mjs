@@ -16,8 +16,8 @@
  * what actually happened: how many goals it caught, on the right side, with zero clairvoyance.
  *
  *   node ear.mjs --selftest
- *   GAFFER_API=https://gaffer-cyan.vercel.app node ear.mjs <fixtureId…> [--interval 20] [--once]
- *   GAFFER_API=https://gaffer-cyan.vercel.app node ear.mjs --score <fixtureId>
+ *   GAFFER_API=https://www.mygaffer.xyz node ear.mjs <fixtureId…> [--interval 20] [--once]
+ *   GAFFER_API=https://www.mygaffer.xyz node ear.mjs --score <fixtureId>
  *
  * The reasoning is deterministic and auditable — same ticks in, same events out.
  */

@@ -23,7 +23,7 @@ import { chromium } from "playwright";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : d; };
-const BASE = (process.env.BASE || arg("base", "https://gaffer-cyan.vercel.app")).replace(/\/$/, "");
+const BASE = (process.env.BASE || arg("base", "https://www.mygaffer.xyz")).replace(/\/$/, "");
 /** The finished, anchored match the demo pool lives on. Must match the server's HERO_FIXTURE. */
 const HERO = Number(process.env.HERO_FIXTURE || arg("fixture", 18193785));
 const FRESH = !process.argv.includes("--keep-storage");

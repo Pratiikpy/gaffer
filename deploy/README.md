@@ -43,5 +43,5 @@ systemctl restart gaffer-agents
 Any always-on host works — it is just one Node process:
 
 ```bash
-GAFFER_API=https://gaffer-cyan.vercel.app node agents/worker.mjs
+GAFFER_API=https://www.mygaffer.xyz node agents/worker.mjs
 ```

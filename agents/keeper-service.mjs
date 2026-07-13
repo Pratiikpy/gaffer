@@ -14,7 +14,7 @@
  * Every tick is appended to `logs/keeper-<date>.jsonl`, one JSON object per line, including the failures.
  * The log is the evidence: unattended operation is a claim, and claims need receipts.
  *
- *   BASE=https://gaffer-cyan.vercel.app GAFFER_ADMIN_KEY=… node agents/keeper-service.mjs
+ *   BASE=https://www.mygaffer.xyz GAFFER_ADMIN_KEY=… node agents/keeper-service.mjs
  *   node agents/keeper-service.mjs --once             # a single sweep, then exit (CI / smoke test)
  *   node agents/keeper-service.mjs --interval 15      # tick every 15s (default 20)
  *   node agents/keeper-service.mjs --fixture 18218149 # match day: watch one match, pay it in seconds

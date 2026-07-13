@@ -7,7 +7,7 @@ import { Providers } from "./providers";
 const outfit = Outfit({ variable: "--font-outfit", subsets: ["latin"], weight: ["400", "500", "600", "700", "800"] });
 const jbmono = JetBrains_Mono({ variable: "--font-jbmono", subsets: ["latin"], weight: ["400", "500", "600"] });
 
-const SITE = "https://gaffer-cyan.vercel.app";
+const SITE = "https://www.mygaffer.xyz";
 const TITLE = "GAFFER — call it, get paid the second it happens";
 const DESC = "The World Cup game you already play in the group chat — now real, and it settles itself.";
 

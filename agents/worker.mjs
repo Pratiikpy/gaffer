@@ -18,7 +18,7 @@
  * (which fixtures it picked, restarts) go to logs/worker-<date>.jsonl. Deterministic agents, one env var
  * to point it at prod, no human in the loop.
  *
- *   GAFFER_API=https://gaffer-cyan.vercel.app node agents/worker.mjs
+ *   GAFFER_API=https://www.mygaffer.xyz node agents/worker.mjs
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";

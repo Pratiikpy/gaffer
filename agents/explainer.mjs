@@ -13,7 +13,7 @@
  * logged. Deterministic trigger (`detectMove`, shared shape with the detector), model-written prose.
  *
  *   node explainer.mjs --selftest
- *   GAFFER_API=https://gaffer-cyan.vercel.app node explainer.mjs <fixtureId…> [--interval 45] [--once]
+ *   GAFFER_API=https://www.mygaffer.xyz node explainer.mjs <fixtureId…> [--interval 45] [--once]
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";

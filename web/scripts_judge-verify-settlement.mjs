@@ -9,7 +9,7 @@
  */
 import { Connection, PublicKey } from "@solana/web3.js";
 const RPC = process.env.DRIVER_RPC || "https://api.devnet.solana.com";
-const BASE = "https://gaffer-cyan.vercel.app";
+const BASE = "https://www.mygaffer.xyz";
 const TXLINE = "6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J";        // TxLINE oracle — the validate_stat program
 const KERNEL = "HBJKUPdL4g1K7jpJdPMACMDK6nhPc44gd8RaPtHgwhcG";        // LATCH parimutuel kernel
 const conn = new Connection(RPC, "confirmed");

@@ -840,7 +840,7 @@ export default function GafferApp() {
             } catch { return false; }
           }}
           onShare={async () => {
-            const text = "I'm calling the World Cup on GAFFER — paid the second it happens. 🟢 gaffer-cyan.vercel.app";
+            const text = "I'm calling the World Cup on GAFFER — paid the second it happens. 🟢 www.mygaffer.xyz";
             try { if ((navigator as any).share) await (navigator as any).share({ text }); else await navigator.clipboard.writeText(text); } catch { /* dismissed */ }
           }}
         />
@@ -2450,7 +2450,7 @@ function PaidOverlay({ paid, close, flash, econ }: any) {
     // N3 — the card speaks the reader's language. Mexico is half this market.
     const lang = detectLang();
     // The card link that unfurls the visual "+X paid" image (via /win's OG) — this is what actually travels.
-    const cardUrl = `https://gaffer-cyan.vercel.app${winCardPath({ amount: paid.amount, question: paid.q, calledAt: paid.calledAt ?? null, mult: paid.mult ?? null, stake: stake > 0 ? stake : null, lang })}`;
+    const cardUrl = `https://www.mygaffer.xyz${winCardPath({ amount: paid.amount, question: paid.q, calledAt: paid.calledAt ?? null, mult: paid.mult ?? null, stake: stake > 0 ? stake : null, lang })}`;
     const text = shareWin(lang, {
       stake: stake > 0 ? stake : undefined,
       payout: paid.amount,
@@ -3589,7 +3589,7 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
   }, []);
   const shareReceipt = async (r: any) => {
     const stamp = r.calledAt != null ? ` Called it at ${r.calledAt}%${r.mult ? ` — paid ${r.mult.toFixed(2)}×` : ""}.` : "";
-    const text = `I called it on GAFFER — +${money(r.amount)} on "${r.q}".${stamp} 🟢 gaffer-cyan.vercel.app`;
+    const text = `I called it on GAFFER — +${money(r.amount)} on "${r.q}".${stamp} 🟢 www.mygaffer.xyz`;
     try {
       if ((navigator as any).share) await (navigator as any).share({ text });
       else { await navigator.clipboard.writeText(text); flash?.("Receipt copied"); }
@@ -3649,7 +3649,7 @@ function You({ streak, bal, points, nation, userName, userId, flash, cfg, muted,
         <div className="flex gap-6 mt-3">
           {[[streak, "day streak"], [points, "points"], [receipts.length, "calls landed"]].map(([v, k]: any, i: number) => (<div key={i}><div className="text-2xl font-extrabold tabular-nums">{v}</div><div className="mono text-[9px] text-white/45 uppercase tracking-wide mt-0.5">{k}</div></div>))}
         </div>
-        <button onClick={() => { const text = `My World Cup on GAFFER 🟢 ${streak}-day streak · ${points} pts · ${receipts.length} calls landed · flying ${nation}. gaffer-cyan.vercel.app`; if ((navigator as any).share) (navigator as any).share({ text }).catch(() => {}); else { navigator.clipboard.writeText(text); flash?.("Your Cup copied — paste it in the chat"); } }} className="mt-4 h-9 px-4 rounded-lg bg-white text-[var(--ink)] text-sm font-bold">Share your Cup</button>
+        <button onClick={() => { const text = `My World Cup on GAFFER 🟢 ${streak}-day streak · ${points} pts · ${receipts.length} calls landed · flying ${nation}. www.mygaffer.xyz`; if ((navigator as any).share) (navigator as any).share({ text }).catch(() => {}); else { navigator.clipboard.writeText(text); flash?.("Your Cup copied — paste it in the chat"); } }} className="mt-4 h-9 px-4 rounded-lg bg-white text-[var(--ink)] text-sm font-bold">Share your Cup</button>
       </div>
 
       {/* One-screen scoring explainer (Y6) — plain language, no fake precision. Points track your read, not luck. */}

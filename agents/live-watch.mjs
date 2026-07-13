@@ -12,7 +12,7 @@
  * it. The interesting number it produces is `paidAfterMs` — the gap between a goal appearing in the feed
  * and the pool on it settling on-chain. That is the product's whole claim, measured rather than asserted.
  *
- *   BASE=https://gaffer-cyan.vercel.app node agents/live-watch.mjs --fixture 18218149
+ *   BASE=https://www.mygaffer.xyz node agents/live-watch.mjs --fixture 18218149
  *   node agents/live-watch.mjs --fixture 18172379 --once   # sanity check against a finished match
  */
 import { appendFileSync, mkdirSync } from "node:fs";

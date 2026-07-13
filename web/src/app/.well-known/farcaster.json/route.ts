@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  * account; it is issued by the owner from Warpcast and injected from the environment, never invented
  * here — an unsigned manifest is simply an unverified app, and pretending otherwise would be a lie. */
 export async function GET() {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "https://gaffer-cyan.vercel.app";
+  const base = process.env.NEXT_PUBLIC_BASE_URL || "https://www.mygaffer.xyz";
 
   const accountAssociation = process.env.FARCASTER_HEADER && process.env.FARCASTER_PAYLOAD && process.env.FARCASTER_SIGNATURE
     ? {

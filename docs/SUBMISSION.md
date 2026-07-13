@@ -1,6 +1,6 @@
 # GAFFER — TxLINE Hackathon Submission
 
-**Live app:** https://gaffer-cyan.vercel.app (no sign-up, no install, no wallet to set up — you're playing in seconds, and judges never need to fund anything)
+**Live app:** https://www.mygaffer.xyz (no sign-up, no install, no wallet to set up — you're playing in seconds, and judges never need to fund anything)
 **Demo video:** _(filmed during a live knockout match — link added on submission)_
 **Repo:** this repository · **Chain:** Solana devnet · **Data:** TxLINE / TxODDS live World Cup feeds
 

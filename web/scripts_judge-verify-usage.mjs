@@ -30,7 +30,7 @@ for (const a of accts) {
   if (d[81] === 1) claims++;                            // claimed flag @ 8+32+32+1+8 = 81
 }
 // Pool settlement status from the public markets API (already decoded server-side).
-const mk = await fetch("https://gaffer-cyan.vercel.app/api/markets").then((r) => r.json()).catch(() => ({ markets: [] }));
+const mk = await fetch("https://www.mygaffer.xyz/api/markets").then((r) => r.json()).catch(() => ({ markets: [] }));
 const allPools = (mk.markets || []).length;
 const settledPools = (mk.markets || []).filter((m) => m.statusLabel === "paid").length;
 console.log("distinct wallets (position owners):", wallets.size);

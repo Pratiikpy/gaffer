@@ -140,6 +140,25 @@ GAFFER_API=https://gaffer-cyan.vercel.app node agents/ear.mjs --score 18213979
 - **TxLINE oracle (devnet):** `6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J` — `validate_stat` returns a verified verdict the kernel reads before it pays.
 - Devnet throughout today; the kernel is chain-agnostic and flips to mainnet the moment TxLINE settlement is live there.
 
+## 🔌 TxLINE endpoints used
+
+Host `txline-dev.txodds.com`, reached through the full auth chain (guest JWT → on-chain subscribe → activate → `X-Api-Token`), proxied server-side so credentials never touch the browser (`web/src/lib/txline.ts`):
+
+| Endpoint | What we pull from it |
+|---|---|
+| `GET /api/fixtures/snapshot` | The 104-match World Cup schedule — every fixture, team, kickoff. |
+| `GET /api/odds/snapshot/{fixtureId}` | Live in-running consensus odds — de-margined implied %, the `InRunning` live-state flag, per-message `MessageId`. Powers the market read, the Drama Meter, the Ear, the Blackout. |
+| `GET /api/odds/validation` | The cryptographic proof for a given odds `MessageId` — the receipt behind a shown price. |
+| `GET /api/scores/historical/{fixtureId}` | SSE stream of the match event/score timeline (goals, cards, clock). Populates once a fixture finalises; used to grade the Ear and drive score-settled pools. |
+| `GET /api/scores/stat-validation` | The signed stat proof for a `fixtureId`/`seq`/`statKey` — the Merkle proof the settlement engine feeds into the on-chain CPI. |
+
+On-chain, the kernel settles by CPI into TxLINE's Solana program (devnet `6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J`):
+
+| On-chain surface | Role |
+|---|---|
+| `validate_stat` (CPI) | Re-verifies the signed Merkle proof against the anchored root *inside the settle transaction*; returns a bool via `get_return_data`. The kernel pays only on `true`. |
+| `daily_scores_roots` PDA | TxLINE's anchored daily Merkle root; the settle path reads it (seed = `epochDay`) — GAFFER never writes it, anchoring is TxLINE's job. |
+
 ## 🚀 Where it's going
 
 Real-money rails (fiat on-ramp, felt-like-Venmo cash-out), Telegram mini-app + Farcaster frame on the same backend, the synchronized-squad live rounds ("the minute every sportsbook locks its doors, our round starts"), and season-two beyond the World Cup — the kernel generalizes to any competition TxLINE carries.

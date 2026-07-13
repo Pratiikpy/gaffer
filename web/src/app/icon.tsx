@@ -3,16 +3,16 @@ import { ImageResponse } from "next/og";
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
 
-/** Favicon / tab icon — the GAFFER mark, generated so there's no binary in the repo. */
+/** Favicon / tab icon — the GAFFER mark (the same SVG the app header draws), generated so there's no binary in the repo. */
 export default function Icon() {
-  const d = 48, stroke = 6;
   return new ImageResponse(
     (
-      <div style={{ width: "64px", height: "64px", display: "flex", alignItems: "center", justifyContent: "center", background: "#05100b" }}>
-        <div style={{ position: "relative", width: `${d}px`, height: `${d}px`, display: "flex" }}>
-          <div style={{ position: "absolute", inset: "0", borderRadius: "50%", border: `${stroke}px solid #ffffff`, display: "flex" }} />
-          <div style={{ position: "absolute", top: "0", bottom: "0", left: `${d / 2 - stroke / 2}px`, width: `${stroke}px`, background: "#ffffff", display: "flex" }} />
-        </div>
+      <div style={{ width: "64px", height: "64px", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF7", borderRadius: "12px" }}>
+        <svg viewBox="0 0 64 64" width="46" height="46" fill="none">
+          <circle cx="32" cy="32" r="22" stroke="#0A0A0A" strokeWidth="7" />
+          <line x1="32" y1="6" x2="32" y2="58" stroke="#0A0A0A" strokeWidth="7" />
+          <circle cx="32" cy="32" r="6" fill="#0A0A0A" />
+        </svg>
       </div>
     ),
     size

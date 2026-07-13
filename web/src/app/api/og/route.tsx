@@ -37,7 +37,11 @@ export function GET(req: Request) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div style={{ width: "40px", height: "40px", borderRadius: "50%", border: "6px solid white", display: "flex" }} />
+          <svg viewBox="0 0 64 64" width="44" height="44" fill="none">
+            <circle cx="32" cy="32" r="22" stroke="#ffffff" strokeWidth="6.5" />
+            <line x1="32" y1="6" x2="32" y2="58" stroke="#ffffff" strokeWidth="6.5" />
+            <circle cx="32" cy="32" r="6" fill="#ffffff" />
+          </svg>
           <div style={{ display: "flex", fontSize: "34px", fontWeight: 800, letterSpacing: "-1px" }}>gaffer.</div>
         </div>
 

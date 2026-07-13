@@ -186,6 +186,10 @@ export default function GafferApp() {
    * fixture leaves behind — so a shared call quietly landed the fan on a different match than the one
    * they were sent. A deliberate choice is now never overridden. */
   const fixtureChosen = useRef(false);
+  // When a fan replays the Frozen Window, the round is hosted on a recently-FINISHED fixture (whose score
+  // is readable) so it grades to a real outcome. The rounds poll follows this fixture until the reveal is
+  // dismissed, then falls back to the live fixture. Null = no replay in flight.
+  const replayFixRef = useRef<number | null>(null);
   const parlay = useMemo(() => (wallet ? new BrowserParlay(wallet) : null), [wallet]);
   const activeFixture = selectedFixture;
 
@@ -404,7 +408,7 @@ export default function GafferApp() {
   // flips to the same takeover at the same second; the reveal lingers until dismissed.
   useEffect(() => {
     let on = true;
-    const tick = async () => { const r = await roundsGet(activeFixture, squadCode || null); if (on) setFrozen(r); };
+    const tick = async () => { const r = await roundsGet(replayFixRef.current || activeFixture, squadCode || null); if (on) setFrozen(r); };
     tick(); if (!POLL) return () => { on = false; }; const t = setInterval(tick, 2000);
     return () => { on = false; clearInterval(t); };
   }, [activeFixture, squadCode]);
@@ -419,7 +423,20 @@ export default function GafferApp() {
     if (frozenArming) return;
     setFrozenArming(true);
     flash(kind === "freeze" ? "The referee's at the screen…" : "The market's gone quiet…");
-    try { const r = await roundOpen({ kind, fixtureId: activeFixture, squadCode: squadCode || null }); if (r?.round) { setFrozen({ active: r.round, settled: null }); refreshPoints(); } }
+    try {
+      // A fan-triggered window REPLAYS a real moment. On the dev feed a live match's score is post-match, so
+      // a round hosted on the live fixture can only VOID. Host it on a recently-finished fixture whose goals
+      // ARE readable — it grades to a real STANDS/OVERTURNED at settle. Fall back to the live fixture if none.
+      let fixtureId = activeFixture;
+      try {
+        const finished = await mysteryList();
+        const pick = finished.find((m) => m.fixtureId);
+        if (pick) { learnFixtures(finished); fixtureId = pick.fixtureId; replayFixRef.current = pick.fixtureId; }
+      } catch { /* no finished fixture — fall through to the live one (honest VOID) */ }
+      const r = await roundOpen({ kind, fixtureId, squadCode: squadCode || null });
+      if (r?.round) { setFrozen({ active: r.round, settled: null }); refreshPoints(); }
+      else replayFixRef.current = null;
+    }
     finally { setFrozenArming(false); }
   };
   // A settled round the user hasn't dismissed and took part in (or a squad round) → show the reveal.
@@ -770,7 +787,7 @@ export default function GafferApp() {
           round={frozenActive || frozenReveal}
           userId={userId}
           onCall={frozenCall}
-          onDismiss={() => { const id = (frozenActive || frozenReveal)?.id; if (id) setFrozenSeen(id); refreshPoints(); if (squadCode) refreshSquad(); }}
+          onDismiss={() => { const id = (frozenActive || frozenReveal)?.id; if (id) setFrozenSeen(id); replayFixRef.current = null; refreshPoints(); if (squadCode) refreshSquad(); }}
           onPinLore={(text: string) => { if (squadCode) postBanter(`Pinned — ${text}`); }}
         />
       )}

@@ -12,7 +12,11 @@ import { pushSquad } from "./push";
 import { cached } from "./cache";
 
 const LOCK_MS = 20_000;      // 20s judge-grace window to call before entry locks (KILL-1 discipline)
-const VOID_GRACE_MS = 75_000; // after settles_at, how long to wait for a readable score before voiding the round
+const VOID_GRACE_MS = 10_000; // after settles_at, how long to wait for a readable score before voiding the round.
+                              // On the dev feed a live match's score is post-match, so a mid-match window can
+                              // never grade STANDS/OVERTURNED live — it resolves to an honest VOID ("called off").
+                              // Kept short so that reveal lands in view (~55s total) instead of hanging; a
+                              // finished/relived match fills the feed and still grades to a real outcome at settles_at.
 const FREEZE_MS = 45_000;    // review window: 20s to call, then ~25s of sweat (real reviews avg 3m12s;
 const BLACKOUT_MS = 40_000;  // compressed here so a demo/round resolves in view)
 const AUTO_FRESH_MS = 45_000; // a real match event only auto-triggers a Freeze if it landed this recently

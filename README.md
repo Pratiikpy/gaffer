@@ -19,7 +19,9 @@ Call what happens on the pitch, together, in real time. Win, and the pot pays yo
 
 Built on **[TxLINE](https://txodds.com)** live World Cup data · settled trustlessly on **Solana** · three tracks: Consumer · Prediction Markets & Settlement · Trading Tools & Agents.
 
-_Demo filmed live during a World Cup match — linked here on submission._
+[![Watch the demo](https://img.shields.io/badge/▶_Watch_the_5--min_demo-YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/4rUJCGMJ-BE)
+
+Track cuts: [Consumer](https://youtube.com/shorts/yJMzzDG58k4) · [Prediction Markets & Settlement](https://youtube.com/shorts/emJBGJMLURg) · [Trading Tools & Agents](https://youtube.com/shorts/V5YAJH1PRLw) · _filmed live during a World Cup match_
 
 <table>
 <tr>

@@ -128,7 +128,7 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
       <a class="ghost" href="https://www.mygaffer.xyz/api/markets" target="_blank" rel="noopener">Live markets API</a>
     </div>
     <div class="proof-bar">
-      <div class="proof-stat"><strong>38<span class="u">/38</span></strong><span>kernel tests passing on devnet</span></div>
+      <div class="proof-stat"><strong>40<span class="u">/40</span></strong><span>kernel tests — incl. forged-proof rejection</span></div>
       <div class="proof-stat"><strong>6.56 <span class="u">SOL</span></strong><span>in open pots, right now</span></div>
       <div class="proof-stat"><strong>14</strong><span>live consumer features</span></div>
       <div class="proof-stat"><strong>3 <span class="u">tracks</span></strong><span>one product, entered in all three</span></div>
@@ -200,7 +200,7 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
           <li><b>Verifiable resolution</b> — a receipt anyone can check</li>
           <li><b>Permissionless</b> — anyone may crank a settle</li>
           <li><b>No P2P of the credit token</b> — pools escrow SOL</li>
-          <li><b>38/38</b> devnet kernel tests</li>
+          <li><b>40/40</b> kernel tests · a forged proof is rejected</li>
         </ul>
       </div>
       <div class="track">
@@ -372,23 +372,40 @@ pre .g{color:#39d98a}.pre .m{color:#8b93a1}pre .c{color:#6b7280}
       </div>
       <div class="card">
         <h3>Verify it yourself</h3>
-        <pre><span class="c"># the whole trustless path, in one file</span>
-web/src/lib/settleEngine.ts
+        <pre><span class="c"># one command — the whole thing, zero credentials</span>
+npm run judge:verify
+  <span class="g">✓ usage recomputed straight from chain</span>
+  <span class="g">✓ a real settle + winner's payout, on Explorer</span>
+  <span class="g">✓ real proof TRUE · forged proof REJECTED</span>
+  <span class="g">✓ the Ear's on-chain calls, re-fetched</span>
 
-<span class="c"># reproduce the 38/38 devnet suite</span>
+<span class="c"># the 40/40 devnet suite — incl. a tampered proof</span>
 npm run test:kernel
 
-<span class="c"># recompute the live usage from chain (zero creds)</span>
-node scripts_judge-verify-usage.mjs
-<span class="c"># verify one trustless settlement + payout</span>
-node scripts_judge-verify-settlement.mjs
-
-<span class="c"># the LATCH kernel, on devnet</span>
-<span class="g">HBJKUPdL…gwhcG</span>
-<span class="c"># the TxLINE oracle it verifies against</span>
-<span class="g">6pW64gN1…5wyP2</span></pre>
+<span class="c"># the kernel · the TxLINE oracle it verifies against</span>
+<span class="g">HBJKUPdL…gwhcG</span>  <span class="g">6pW64gN1…5wyP2</span></pre>
       </div>
     </div>
+    <style>
+      .livecta{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-top:20px;text-decoration:none;background:var(--gd);color:#fff;border-radius:16px;padding:26px 30px;position:relative;overflow:hidden}
+      .livecta::after{content:"";position:absolute;right:-60px;bottom:-80px;width:240px;height:240px;border-radius:50%;background:var(--green);opacity:.16;filter:blur(50px)}
+      .livecta .lx{position:relative;max-width:66ch}
+      .livecta .tag{font:700 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--green);display:block;margin-bottom:10px}
+      .livecta h3{margin:0 0 8px;font-size:clamp(20px,2.6vw,26px);font-weight:800;letter-spacing:-.01em;color:#fff}
+      .livecta p{margin:0;color:#cdd5da;font-size:15px;line-height:1.55}
+      .livecta p code{font-family:var(--mono);color:#9fe7c4;font-size:.92em}
+      .livecta p b{color:#fff}
+      .livecta .go{position:relative;flex:none;display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#07130c;font:800 15px/1 "Outfit";padding:14px 20px;border-radius:999px}
+      .livecta:hover .go{background:#fff}
+    </style>
+    <a class="livecta" href="https://www.mygaffer.xyz/fraud" target="_blank" rel="noopener">
+      <div class="lx">
+        <span class="tag">Live · re-runs on every page load</span>
+        <h3>Watch a forged proof get rejected on-chain</h3>
+        <p>The same real TxLINE proof, checked two ways on devnet: untouched, <code>validate_stat</code> returns <b>TRUE</b> and the pool pays. Flip a single byte and it reverts — <code>Custom:6023</code>, no payout. The settler has no way to force a result it can't prove. Nothing simulated: it hits the public RPC each time you load the page.</p>
+      </div>
+      <span class="go">Open /fraud ↗</span>
+    </a>
   </section>
 
   <!-- AGENTS -->
@@ -419,6 +436,14 @@ node agents/ear.mjs --selftest
 {"event":"settled","fixture":18172379,"paid":11}</pre>
       </div>
     </div>
+    <a class="livecta" href="https://www.mygaffer.xyz/fleet" target="_blank" rel="noopener">
+      <div class="lx">
+        <span class="tag">Live · heartbeat every 30s</span>
+        <h3>Watch all six agents working, right now</h3>
+        <p>A public dashboard of the deployed fleet: which match each agent is on, its uptime, and the <b>exact last line it emitted</b> — read from the droplet's live heartbeat. When a World Cup fixture is in play, you watch the desk think in real time; between matches it reads "up, parked until kickoff."</p>
+      </div>
+      <span class="go">Open /fleet ↗</span>
+    </a>
   </section>
 
   <!-- RECEIPTS -->
@@ -433,7 +458,10 @@ node agents/ear.mjs --selftest
       <div class="rec"><div class="k">Live open pools + pot</div><div class="v"><a href="https://www.mygaffer.xyz/api/markets" target="_blank" rel="noopener">GET /api/markets</a></div></div>
       <div class="rec"><div class="k">The Gaffer's Ear feed</div><div class="v"><a href="https://www.mygaffer.xyz/api/ear-calls?fixture=18222446" target="_blank" rel="noopener">GET /api/ear-calls</a></div></div>
       <div class="rec"><div class="k">A real live Ear goal-call, on-chain</div><div class="v"><a href="https://explorer.solana.com/tx/3fVdNyJdMi8hfAYBows27paXRe9HWPQnQXAcunAoVoVPFrRekakrmqURGMchsMHWScyZQWfiPy3rFC5VAY2bBTpn?cluster=devnet" target="_blank" rel="noopener">GOAL — Argentina, 98% · tx 3fVdNyJd…bBTpn</a></div></div>
-      <div class="rec"><div class="k">Kernel test suite</div><div class="v">npm run test:kernel → 38/38</div></div>
+      <div class="rec"><div class="k">Forge-a-proof demo (live)</div><div class="v"><a href="https://www.mygaffer.xyz/fraud" target="_blank" rel="noopener">/fraud — real TRUE vs forged REJECTED</a></div></div>
+      <div class="rec"><div class="k">The fleet, live</div><div class="v"><a href="https://www.mygaffer.xyz/fleet" target="_blank" rel="noopener">/fleet — six agents · live heartbeat</a></div></div>
+      <div class="rec"><div class="k">One-command verify (zero creds)</div><div class="v">npm run judge:verify</div></div>
+      <div class="rec"><div class="k">Kernel test suite</div><div class="v">npm run test:kernel → 40/40 · incl. tampered-proof rejection</div></div>
       <div class="rec"><div class="k">TxLINE endpoints used</div><div class="v">odds/snapshot · scores/historical · scores/stat-validation · fixtures/snapshot · guest auth + on-chain subscribe</div></div>
     </div>
   </section>

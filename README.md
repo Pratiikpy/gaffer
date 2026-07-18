@@ -10,7 +10,7 @@
 ![Anchor](https://img.shields.io/badge/Anchor-0.31-1d1d1f)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
 ![TxLINE](https://img.shields.io/badge/TxLINE-live_feed-0EA5E9)
-![Kernel tests](https://img.shields.io/badge/kernel_tests-38%2F38-05C46B)
+![Kernel tests](https://img.shields.io/badge/kernel_tests-40%2F40-05C46B)
 ![Agents](https://img.shields.io/badge/agents-7_live_24%2F7-05C46B)
 ![Settlement](https://img.shields.io/badge/settlement-trustless_CPI-05C46B)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -56,6 +56,8 @@ GAFFER doesn't work that way. Settlement is a CPI into TxLINE's on-chain `valida
 - **No operator can refuse you.** The pool has no pause button and no custodian. The result releases the money; the code is the only counterparty.
 - **Every payout is checkable.** The settle signature is on Explorer, and the proof it verified is the same signed feed TxODDS publishes.
 
+**See it happen, live.** The [`/fraud`](https://www.mygaffer.xyz/fraud) page checks one real TxLINE proof two ways on devnet every time you load it: untouched, `validate_stat` returns `true` and the pool pays; flip a single byte and the re-derived root no longer matches the anchored one, so the oracle reverts (`Custom:6023`) — no payout. The kernel suite pins the same property as a passing test: a **tampered proof is rejected and the pool stays open**.
+
 That is the real answer to the Settlement track: not "we settle on live data," but *no human is trusted to settle at all.*
 
 ## ▶️ Play it in 60 seconds
@@ -96,13 +98,13 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 
 ## ✅ Proof it works
 
-- **Kernel test suite: 38/38 passing on devnet** — pro-rata payout to the lamport, empty-side→VOID refund, the void anti-grief lock (unvoidable until the full 1h grace), `settle_no` (proving a stat *never* crossed its line), parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, the **capped rake** (exact fee split + cap + authority guards), and every settlement-binding negative (fixture/stat/binary/expiry/comparison). Run: `npm run test:kernel`.
+- **Kernel test suite: 40/40 passing on devnet** — pro-rata payout to the lamport, empty-side→VOID refund, the void anti-grief lock (unvoidable until the full 1h grace), `settle_no` (proving a stat *never* crossed its line), parlay all-legs-hit sweep, parlay bust→NO, `lock_ts` late-call rejection, the **capped rake** (exact fee split + cap + authority guards), a **forged/tampered proof rejected** (one byte flipped → the settle reverts and the pool stays open), and every settlement-binding negative (fixture/stat/binary/expiry/comparison). The suite auto-discovers a currently-anchored fixture, so it never goes stale. Run: `npm run test:kernel`.
 - **Goal → on-chain payout in ~4 seconds — measured against a real World Cup goal.** On USA 2–0 Bosnia, a pool on "USA to score twice" settles the moment the signed data is available: three runs at **3.8 / 4.1 / 4.9 s** from proof to confirmed on-chain payout, the winner paid each time, every settle signature verified on devnet (`err: null`). A live match adds only TxODDS's ~5-min root-anchor cadence on top — their floor, not ours. Run: `cd web && npm run measure:settle`.
 - **The full stake → settle → PAID loop, proven on-chain** — a fresh wallet stakes YES on a finished, anchored fixture, the pool settles permissionlessly on the real TxLINE proof (`provenValue: 2`), and the claim pays out a profit — receipt signature on Explorer.
-- **Seven agents live 24/7** on a DigitalOcean host, discovering fixtures themselves and reading the signed feed — **the Ear** (events inferred from the market, committed on-chain), the keeper, sharp-move detector, market-maker, CLV tracker, arena, and the Read analyst — with kept logs (`agents/`, `deploy/`). The Ear's on-chain proof: a Memo like `GAFFER-EAR|18172379|goal|home|91|…` lands on devnet the instant it calls, verifiable by block time.
+- **Seven agents live 24/7** on a DigitalOcean host, discovering fixtures themselves and reading the signed feed — **the Ear** (events inferred from the market, committed on-chain), the keeper, sharp-move detector, market-maker, CLV tracker, arena, and the Read analyst — with kept logs (`agents/`, `deploy/`). The Ear's on-chain proof: a Memo like `GAFFER-EAR|18172379|goal|home|91|…` lands on devnet the instant it calls, verifiable by block time. **Watch the whole fleet live at [`/fleet`](https://www.mygaffer.xyz/fleet)** — a public dashboard reading the droplet's 30-second heartbeat: which match each agent is on, its uptime, and the exact last line it emitted.
 - **The Frozen Window, load-tested** — 24 concurrent callers into one round, zero failures, correct tally, settled on the real goal-count delta.
 - **Deployed and playable** at the live URL above, backed by hosted Postgres and a dedicated RPC.
-- **Live usage at scale — recomputed from chain, not a self-reported counter.** The parimutuel kernel has **244 distinct wallets, 94 pools settled via `validate_stat`, and 238 on-chain claims (payouts)** across the tournament — the whole create → join → settle → claim lifecycle, exercised multi-user. Reproduce every number yourself, zero credentials: `cd web && node scripts_judge-verify-usage.mjs`. Or verify one **trustless settlement** end-to-end (the `validate_stat` CPI into TxLINE + the winner's payout): `cd web && node scripts_judge-verify-settlement.mjs`. Live figures also served at [`/api/stats`](https://www.mygaffer.xyz/api/stats).
+- **Live usage at scale — recomputed from chain, not a self-reported counter.** The parimutuel kernel has **244 distinct wallets, 94 pools settled via `validate_stat`, and 238 on-chain claims (payouts)** across the tournament — the whole create → join → settle → claim lifecycle, exercised multi-user. Reproduce all of it with one command, zero credentials: `cd web && npm run judge:verify` — it recomputes the usage from chain, shows a real **trustless settlement + winner's payout** (the `validate_stat` CPI into TxLINE), proves a **real proof verifies TRUE while a forged one is REJECTED**, and re-fetches the **Ear's on-chain calls**. Run any leg on its own with `npm run judge:usage | judge:settlement | judge:fraud | judge:ear`. Live figures also served at [`/api/stats`](https://www.mygaffer.xyz/api/stats).
 - **Ask-your-own markets work in plain English** — a fan types "Bosnia to be booked 2+ yellow cards" and it compiles to a monotone over-threshold predicate on a TxLINE stat key, then opens as an on-chain pool. The grammar validates against the live stat (it rejects a bet that already happened, and guides one it can't parse). Nobody else lets a fan mint a market by typing.
 
 > **On the live feed, honestly:** TxODDS's devnet feed streams **odds in-running** (the market is genuinely live — prices move to the second), but it does **not** stream live *score events* — the score stream fills in only once a match is finalised. So the live surfaces run on the live odds (the market read, the Drama Meter, the Blackout that arms off real market silence), and score-settled pools settle on the signed score data once it's anchored. Nothing fabricates a scoreline it can't prove.
@@ -112,7 +114,7 @@ That is the real answer to the Settlement track: not "we settle on live data," b
 **Kernel + scripts** (`/`, Node + ts-node):
 ```bash
 npm install
-npm run test:kernel     # 38-case devnet suite (needs ~2 devnet SOL on .devnet-key.json)
+npm run test:kernel     # 40-case devnet suite (needs ~2 devnet SOL on .devnet-key.json)
 npm run e2e:kernel      # single-market stake → settle → claim, end to end
 npm run keeper          # autonomous settler loop
 ```

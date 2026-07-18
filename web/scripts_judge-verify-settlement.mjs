@@ -20,26 +20,39 @@ const EX = (s) => `https://explorer.solana.com/tx/${s}?cluster=devnet`;
 console.log("GAFFER — trustless settlement, verified from chain (zero credentials)");
 console.log("kernel:", KERNEL, "| TxLINE oracle:", TXLINE, "\n");
 
-// pick a settled pool: CLI arg, else the highest-pot "paid" pool from the public list
-let pool = process.argv[2];
-if (!pool) {
+// Scan one pool's on-chain history for its settle (the validate_stat CPI) and a winner's claim. A pool's
+// settle happens once, early; a popular pool then accrues many claims, so we walk a wide window (not just
+// the newest few sigs) oldest→newest, or the settle falls off the end behind the claims.
+async function scanPool(pool) {
+  const sigs = await retry(() => conn.getSignaturesForAddress(new PublicKey(pool), { limit: 200 }));
+  let settleTx = null, claimTx = null;
+  for (const si of sigs.reverse()) {                                  // oldest→newest: create, joins, settle, claims
+    if (si.err) continue;
+    const tx = await retry(() => conn.getTransaction(si.signature, { maxSupportedTransactionVersion: 0 }));
+    const logs = (tx?.meta?.logMessages || []).join(" ");
+    const ins = (logs.match(/Instruction: (\w+)/g) || []).map((x) => x.replace("Instruction: ", ""));
+    if (!settleTx && logs.includes(TXLINE) && /Settle|ValidateStat/i.test(ins.join(","))) settleTx = si.signature;
+    else if (settleTx && !claimTx && /Claim/i.test(ins.join(","))) claimTx = si.signature;
+    if (settleTx && claimTx) break;
+    await sleep(200);
+  }
+  return { settleTx, claimTx };
+}
+
+// pick a settled pool: CLI arg (scan just it), else walk the "paid" pools (highest-pot first) until one
+// yields a real on-chain settle tx — so the one-command run always lands on a provable settlement.
+let pool = process.argv[2], settleTx = null, claimTx = null;
+if (pool) {
+  ({ settleTx, claimTx } = await scanPool(pool));
+} else {
   const mk = await retry(() => fetch(`${BASE}/api/markets`).then((r) => r.json()));
   const paid = (mk.markets || []).filter((m) => m.statusLabel === "paid").sort((a, b) => (b.potSol || 0) - (a.potSol || 0));
   if (!paid.length) { console.log("no settled pools found"); process.exit(0); }
-  pool = paid[0].pubkey;
-  console.log(`chosen settled pool: ${pool}  (${paid[0].home} v ${paid[0].away}, pot ${paid[0].potSol} SOL)\n`);
-}
-
-const sigs = await retry(() => conn.getSignaturesForAddress(new PublicKey(pool), { limit: 15 }));
-let settleTx = null, claimTx = null;
-for (const si of sigs.reverse()) {                                    // oldest→newest: create, joins, settle, claims
-  if (si.err) continue;
-  const tx = await retry(() => conn.getTransaction(si.signature, { maxSupportedTransactionVersion: 0 }));
-  const logs = (tx?.meta?.logMessages || []).join(" ");
-  const ins = (logs.match(/Instruction: (\w+)/g) || []).map((x) => x.replace("Instruction: ", ""));
-  if (!settleTx && logs.includes(TXLINE) && /Settle|ValidateStat/i.test(ins.join(","))) settleTx = si.signature;
-  else if (settleTx && !claimTx && /Claim/i.test(ins.join(","))) claimTx = si.signature;
-  await sleep(250);
+  for (const cand of paid.slice(0, 8)) {
+    const r = await scanPool(cand.pubkey);
+    if (r.settleTx) { pool = cand.pubkey; settleTx = r.settleTx; claimTx = r.claimTx; console.log(`chosen settled pool: ${pool}  (${cand.home} v ${cand.away}, pot ${cand.potSol} SOL)\n`); break; }
+  }
+  if (!pool) { pool = paid[0].pubkey; console.log(`chosen settled pool: ${pool}  (${paid[0].home} v ${paid[0].away}, pot ${paid[0].potSol} SOL)\n`); }
 }
 
 console.log("┌─ verified from chain ────────────────────────────────");

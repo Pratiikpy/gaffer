@@ -26,7 +26,9 @@ const RPC = process.env.RPC || "https://api.devnet.solana.com";
 // A finished World Cup fixture whose day is still anchored in `daily_scores_roots` (USA 2-0 Bosnia:
 // goals and corners both > 0, so one seq proves every market shape the suite needs). Override with
 // FIXTURE=<id> when this one's anchor eventually ages out — the roots keep roughly three weeks.
-const FIXTURE = Number(process.env.FIXTURE || 18172379);
+// Resolved in section 0: env override, else auto-discovered so the suite is always runnable even as
+// match days rotate out of daily_scores_roots (the roots keep ~3 weeks).
+let FIXTURE = Number(process.env.FIXTURE || 0);
 const PROGRAM_ID = new PublicKey((latchIdl as any).address);
 const GRACE = 120; // VOID_GRACE_SECS in the kernel
 const MAX_RAKE_BPS = 500; // must match the kernel's hard cap
@@ -102,24 +104,36 @@ async function main() {
   ), []);
   console.log("  funded B", B.publicKey.toBase58().slice(0, 8), "+ C", C.publicKey.toBase58().slice(0, 8));
 
-  // fetch real proofs: a seq where BOTH P1 goals (key 1) and P1 corners (key 7) are > 0
+  // Fetch real proofs: a seq where BOTH P1 goals (key 1) and P1 corners (key 7) are anchored > 0.
+  // Auto-discover a still-anchored finished fixture so the suite never crashes as days age out — the
+  // env FIXTURE wins; otherwise we walk the app's finished-match list (newest first) and pick the first
+  // whose day is still in daily_scores_roots with both a goal and a corner to prove.
   sec("0 · Fetch real anchored proofs (P1 goals key1>0 AND corners key7>0)");
   const tx = await new TxlineClient(conn, A).authenticate();
-  const events = await tx.historicalEvents(FIXTURE);
-  const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => a - b);
-  // Sample ACROSS the match, not just its tail. The newest sequences are post-final-whistle status
-  // messages that carry no stat proof, so a suite that only looked at the last 25 found nothing and
-  // crashed before a single assertion ran. The settlement engine has always sampled the whole match;
-  // the test suite now does the same, and reports honestly when a fixture genuinely has no proof.
-  const spread = [...new Set(Array.from({ length: 24 }, (_, k) => Math.floor((seqs.length - 1) * (k / 23))))].map((i) => seqs[i]);
-  let g: any = null, c: any = null, seq = 0;
-  for (const s of spread) {
-    const gb = await tx.statValidation(FIXTURE, s, 1);
-    const cb = await tx.statValidation(FIXTURE, s, 7);
-    if (gb && cb && gb.statToProve.value > 0 && cb.statToProve.value > 0) { g = gb; c = cb; seq = s; break; }
+  const BASE = process.env.GAFFER_BASE || "https://www.mygaffer.xyz";
+  let candidates: number[] = FIXTURE ? [FIXTURE] : [];
+  if (!candidates.length) {
+    try {
+      const list = await (globalThis.fetch as any)(`${BASE}/api/mystery/list`).then((r: any) => r.json());
+      candidates = (list?.matches || []).map((m: any) => Number(m.fixtureId)).filter(Boolean);
+    } catch { /* fall through */ }
   }
-  if (!g || !c) throw new Error(`fixture ${FIXTURE}: no anchored seq with BOTH goals>0 and corners>0 (sampled ${spread.length} of ${seqs.length} seqs). Pass FIXTURE=<id> for a match whose day is still anchored.`);
-  console.log(`  ✓ seq ${seq}: goals=${g.statToProve.value} (key ${g.statToProve.key}), corners=${c.statToProve.value} (key ${c.statToProve.key})`);
+  if (!candidates.length) throw new Error("no candidate fixtures (set FIXTURE=<id> of a match whose day is still anchored)");
+  let g: any = null, c: any = null, seq = 0;
+  for (const fx of candidates) {
+    const events = await tx.historicalEvents(fx).catch(() => []);
+    const seqs = [...new Set(events.map((e: any) => Number(e.seq ?? e.Seq)).filter(Number.isFinite))].sort((a, b) => a - b);
+    if (!seqs.length) continue;
+    const spread = [...new Set(Array.from({ length: 24 }, (_, k) => Math.floor((seqs.length - 1) * (k / 23))))].map((i) => seqs[i]);
+    for (const s of spread) {
+      const gb = await tx.statValidation(fx, s, 1);
+      const cb = await tx.statValidation(fx, s, 7);
+      if (gb && cb && gb.statToProve.value > 0 && cb.statToProve.value > 0) { g = gb; c = cb; seq = s; FIXTURE = fx; break; }
+    }
+    if (g && c) break;
+  }
+  if (!g || !c) throw new Error(`no anchored fixture with BOTH goals>0 and corners>0 among ${candidates.length} candidates (their days may have aged out). Pass FIXTURE=<id> of a recent finished match.`);
+  console.log(`  ✓ fixture ${FIXTURE} seq ${seq}: goals=${g.statToProve.value} (key ${g.statToProve.key}), corners=${c.statToProve.value} (key ${c.statToProve.key})`);
 
   // ── create the two TIME-GATED markets up front so the 120s grace elapses during the other tests ──
   // expiry = now+45s: short enough that expiry+grace lapses while T1-T11 run (minutes), but long
@@ -200,6 +214,24 @@ async function main() {
     const a = settleArgs(g);
     await expectErr("T4 settle a FALSE predicate (goals>999)", "PredicateNotMet", () => progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, a.statA, null, null)
       .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc());
+  }
+  { // T4b TAMPERED PROOF — a TRUE predicate (goals>0), but one byte of the Merkle proof is flipped. The
+    // oracle re-derives the root from the forged nodes, it no longer matches the anchored root, and it
+    // refuses to verify — so the settlement is rejected and the market is untouched. This is the whole
+    // "the settler cannot lie" guarantee, tested against the real txoracle + real anchored roots.
+    const id = new BN(Date.now() + 225); const m = marketPda(id), v = vaultPda(m);
+    await progA.methods.createMarket(id, new BN(FIXTURE), g.statToProve.key, g.statToProve.period, 0, 0, new BN(nowSec() + 86400), new BN(nowSec() + 86400))
+      .accounts({ authority: A.publicKey, market: m, vault: v, systemProgram: SystemProgram.programId }).rpc();
+    const a = settleArgs(g);
+    const forgedStatA = JSON.parse(JSON.stringify(a.statA));
+    const fh = Array.from(forgedStatA.statProof[0].hash as number[]); fh[0] = (fh[0] ^ 0x01) & 0xff; forgedStatA.statProof[0].hash = fh; // flip one byte of the first Merkle node
+    let rejected = false;
+    try {
+      await progA.methods.settle(new BN(a.seedTs), a.fixtureSummary, a.subTree, a.mainTree, forgedStatA, null, null)
+        .accounts({ settler: A.publicKey, market: m, dailyScoresMerkleRoots: dsrPda(a.seedTs), txoracleProgram: TXORACLE }).preInstructions(cu()).rpc();
+    } catch { rejected = true; }
+    assert(rejected, "T4b tampered proof (one byte flipped) → settlement REJECTED by the chain (the settler cannot forge a payout)");
+    assert((await progA.account.market.fetch(m)).status === 0, "T4b market stays OPEN after a forged settle — a forgery changes nothing");
   }
   { // T5 expired proof (ts param > expiry)
     const id = new BN(Date.now() + 23); const exp = nowSec() + 30; const m = marketPda(id), v = vaultPda(m);

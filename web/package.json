@@ -25,6 +25,11 @@
     "test:grammar": "node scripts/test-grammar.mjs",
     "test:settle-no": "node scripts/test-settle-no.mjs",
     "test:txline-auth": "node scripts/test-txline-auth.mjs",
+    "judge:verify": "node scripts_judge-verify-usage.mjs && node scripts_judge-verify-settlement.mjs && node scripts_judge-verify-fraud.mjs && node scripts_judge-verify-ear.mjs",
+    "judge:usage": "node scripts_judge-verify-usage.mjs",
+    "judge:settlement": "node scripts_judge-verify-settlement.mjs",
+    "judge:fraud": "node scripts_judge-verify-fraud.mjs",
+    "judge:ear": "node scripts_judge-verify-ear.mjs",
     "verify:stat-keys": "node scripts/verify-stat-keys.mjs",
     "e2e:corners": "node scripts/e2e-corners.mjs",
     "measure:settle": "node scripts/measure-settle-latency.mjs"

@@ -55,8 +55,11 @@ const children = new Map();
 function startOne(agent, fixture) {
   const key = `${agent}\x00${fixture}`;
   const args = [resolve(HERE, `${agent}.mjs`), String(fixture), "--interval", String(process.env.INTERVAL || 45)];
-  const proc = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, GAFFER_API: BASE }, stdio: ["ignore", "inherit", "inherit"] });
-  const rec = { proc, stopped: false };
+  const proc = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, GAFFER_API: BASE }, stdio: ["ignore", "pipe", "inherit"] });
+  const rec = { proc, stopped: false, agent, fixture, startedAt: Date.now(), last: null, lastAt: 0 };
+  // Re-echo to our own stdout (so logs are unchanged) while keeping each child's latest line for the
+  // live fleet heartbeat — the /fleet page shows the real thing each agent just did.
+  proc.stdout.on("data", (d) => { process.stdout.write(d); const s = d.toString().trim().split("\n").filter(Boolean).pop(); if (s) { rec.last = s.slice(0, 180); rec.lastAt = Date.now(); } });
   proc.on("exit", (code) => {
     if (rec.stopped) return;                             // we killed it — match left the slate
     // A clean exit (code 0) is an agent that finished its own job, not a crash: clv-tracker and arena are
@@ -140,7 +143,29 @@ async function reconcile() {
 // the whole fleet).
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { for (const k of [...children.keys()]) stopOne(k); process.exit(0); });
 
+// The live heartbeat: publish which agents are running, on which fixtures, and each one's latest line
+// of output, so /fleet can show the fleet working in real time. Fires every 30s even when the slate is
+// empty (agents parked between matches), so the page reads "up, idle" rather than "offline".
+const BOOT_AT = Date.now();
+async function heartbeat() {
+  const secret = process.env.EAR_COMMIT_SECRET;
+  if (!secret) return;   // no key here → the dashboard simply shows the fleet as offline
+  const perAgent = {};
+  for (const rec of children.values()) {
+    if (rec.stopped) continue;
+    const a = (perAgent[rec.agent] ||= { name: rec.agent, fixture: rec.fixture, up: 0, last: null, lastAt: 0 });
+    a.up = Math.max(a.up, Date.now() - rec.startedAt);
+    if (rec.last && rec.lastAt > a.lastAt) { a.last = rec.last; a.lastAt = rec.lastAt; a.fixture = rec.fixture; }
+  }
+  const agents = Object.values(perAgent).map(({ lastAt, ...a }) => a);
+  const body = { agents, fixtures: [...watched], uptimeMs: Date.now() - BOOT_AT, host: process.env.HOSTNAME || "droplet" };
+  try { await fetch(`${BASE}/api/fleet`, { method: "POST", headers: { "content-type": "application/json", "x-ear-key": secret }, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) }); }
+  catch { /* the next tick covers it */ }
+}
+
 log({ event: "boot", base: BASE, refreshSecs: REFRESH_MS / 1000, agents: AGENTS });
 await reconcile();
+await heartbeat();
 setInterval(reconcile, REFRESH_MS);
 setInterval(settleTick, 3 * 60_000);   // poke the keeper for just-finished matches every 3 minutes
+setInterval(heartbeat, 30_000);        // publish the live fleet state to /api/fleet every 30s
